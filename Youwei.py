@@ -15,13 +15,24 @@ import statistics
 
 class SimpleNeuralNetwork:
     def __init__(self, input_size: int, hidden_sizes: List[int], output_size: int):
+        # 添加网络结构限制
         self.input_size = input_size
-        self.hidden_sizes = hidden_sizes
         self.output_size = output_size
+        
+        # 限制网络结构大小
+        max_layers = 5  # 最多5层
+        max_neurons_per_layer = 20  # 每层最多20个神经元
+        adjusted_hidden_sizes = []
+        for size in hidden_sizes:
+            adjusted_hidden_sizes.append(min(size, max_neurons_per_layer))
+        # 限制层数
+        adjusted_hidden_sizes = adjusted_hidden_sizes[:max_layers]
+        self.hidden_sizes = adjusted_hidden_sizes
+        
         self.weights = []
         self.biases = []
         
-        layer_sizes = [input_size] + hidden_sizes + [output_size]
+        layer_sizes = [input_size] + self.hidden_sizes + [output_size]
         
         for i in range(len(layer_sizes) - 1):
             weight_matrix = [
@@ -76,11 +87,82 @@ class SimpleNeuralNetwork:
             for i in range(len(bias_vector)):
                 if random.random() < mutation_rate:
                     bias_vector[i] += random.gauss(0, mutation_strength)
+    
+    def add_layer(self, position: int = -1):
+        """动态添加一层神经网络"""
+        if len(self.hidden_sizes) >= 5:  # 达到最大层数限制
+            return False
+            
+        if position == -1:
+            position = len(self.hidden_sizes)  # 在最后添加
+        
+        # 确定新层的大小（中间值或现有层的大小）
+        new_layer_size = min(10, max(self.input_size, self.output_size, max(self.hidden_sizes) if self.hidden_sizes else 4))
+        
+        # 更新hidden_sizes
+        self.hidden_sizes.insert(position, new_layer_size)
+        
+        # 重建网络结构
+        layer_sizes = [self.input_size] + self.hidden_sizes + [self.output_size]
+        
+        new_weights = []
+        new_biases = []
+        
+        for i in range(len(layer_sizes) - 1):
+            weight_matrix = [
+                [random.uniform(-1, 1) for _ in range(layer_sizes[i])] 
+                for _ in range(layer_sizes[i + 1])
+            ]
+            bias_vector = [random.uniform(-1, 1) for _ in range(layer_sizes[i + 1])]
+            
+            new_weights.append(weight_matrix)
+            new_biases.append(bias_vector)
+        
+        self.weights = new_weights
+        self.biases = new_biases
+        
+        return True
+    
+    def remove_layer(self, position: int = -1):
+        """动态移除一层神经网络"""
+        if len(self.hidden_sizes) <= 1:  # 至少保留一层
+            return False
+            
+        if position == -1:
+            position = len(self.hidden_sizes) - 1  # 移除最后一层
+        
+        if position < 0 or position >= len(self.hidden_sizes):
+            return False
+        
+        # 更新hidden_sizes
+        del self.hidden_sizes[position]
+        
+        # 重建网络结构
+        layer_sizes = [self.input_size] + self.hidden_sizes + [self.output_size]
+        
+        new_weights = []
+        new_biases = []
+        
+        for i in range(len(layer_sizes) - 1):
+            weight_matrix = [
+                [random.uniform(-1, 1) for _ in range(layer_sizes[i])] 
+                for _ in range(layer_sizes[i + 1])
+            ]
+            bias_vector = [random.uniform(-1, 1) for _ in range(layer_sizes[i + 1])]
+            
+            new_weights.append(weight_matrix)
+            new_biases.append(bias_vector)
+        
+        self.weights = new_weights
+        self.biases = new_biases
+        
+        return True
 
 
 class MemoryBuffer:
     def __init__(self, capacity: int = 100):
-        self.capacity = capacity
+        # 限制记忆容量
+        self.capacity = min(capacity, 500)  # 最大记忆容量限制
         self.buffer = []
         self.position = 0
 
@@ -94,10 +176,22 @@ class MemoryBuffer:
     def get_recent_experiences(self, count: int) -> List[Dict[str, Any]]:
         return self.buffer[-min(count, len(self.buffer)):]
 
+    def sample_batch(self, batch_size: int) -> List[Dict[str, Any]]:
+        """随机采样一批经验用于经验回放"""
+        if len(self.buffer) == 0:
+            return []
+        sample_size = min(batch_size, len(self.buffer))
+        return random.sample(self.buffer, sample_size)
+
 
 class AdaptiveStrategySelector:
     def __init__(self):
         self.current_strategy = 'exploitation'
+        self.strategy_params = {
+            'exploration': {'learning_rate': 0.15, 'mutation_rate': 0.2, 'explore_new_arch': True},
+            'exploitation': {'learning_rate': 0.05, 'mutation_rate': 0.05, 'explore_new_arch': False},
+            'adaptation': {'learning_rate': 0.1, 'mutation_rate': 0.1, 'explore_new_arch': True}
+        }
 
     def evaluate_strategies(self, performance_trend: float) -> str:
         if performance_trend < 0:  # 性能下降
@@ -106,6 +200,44 @@ class AdaptiveStrategySelector:
             return 'exploitation'
         else:  # 性能平稳或轻微波动
             return 'adaptation'
+    
+    def get_strategy_params(self, strategy: str) -> Dict[str, Any]:
+        """获取策略对应的参数"""
+        return self.strategy_params.get(strategy, self.strategy_params['exploitation'])
+
+
+class SafetyGovernance:
+    """安全治理类 - 实现Youwei系统安全边界和控制机制"""
+    def __init__(self):
+        # 固化安全边界
+        self.fixed_boundaries = {
+            'max_generations': 1000,  # 最大进化代数
+            'max_memory_usage': 500,  # 最大记忆容量
+            'resource_budget': 10000,  # 资源预算
+            'max_network_layers': 5,  # 最大网络层数
+            'max_neurons_per_layer': 20,  # 每层最大神经元数
+        }
+        self.current_resource_usage = 0
+        self.is_emergency_stop = False  # 紧急停止标志
+
+    def check_resource_limit(self, increment: int = 1) -> bool:
+        """检查资源使用限制"""
+        if self.current_resource_usage + increment > self.fixed_boundaries['resource_budget']:
+            print("⚠️  Youwei（陆幼薇）系统警告：资源预算即将超限，正在调整学习策略...")
+            return False
+        self.current_resource_usage += increment
+        return True
+
+    def emergency_stop(self):
+        """紧急停止机制"""
+        print("🚨 Youwei（陆幼薇）系统已被紧急停止！")
+        self.is_emergency_stop = True
+
+    def reset_system(self):
+        """重置系统资源配额"""
+        self.current_resource_usage = 0
+        self.is_emergency_stop = False
+        print("🔄 Youwei（陆幼薇）系统已重置资源配额")
 
 
 class YouweiAI:
@@ -122,10 +254,12 @@ class YouweiAI:
         self.memory_buffer = MemoryBuffer(capacity=200)
         self.strategy_selector = AdaptiveStrategySelector()
         self.performance_history = []
+        self.safety_governance = SafetyGovernance()  # 添加安全治理机制
         
+        # 初始化参数，这些将根据策略动态调整
+        self.learning_rate = 0.1
         self.mutation_rate = 0.1
         self.mutation_strength = 0.05
-        self.learning_rate = 0.1
 
     def mse_loss(self, predicted: List[float], target: List[float]) -> float:
         if len(predicted) != len(target):
@@ -134,40 +268,115 @@ class YouweiAI:
         squared_errors = [(p - t) ** 2 for p, t in zip(predicted, target)]
         return sum(squared_errors) / len(squared_errors)
 
-    def simple_backpropagate(self, inputs: List[float], targets: List[float]):
-        original_output = self.network.forward(inputs)
-        original_loss = self.mse_loss(original_output, targets)
+    def compute_gradients(self, inputs: List[float], targets: List[float]) -> tuple:
+        """计算真正的梯度，提高训练效率"""
+        # 前向传播
+        activations = [inputs]
+        zs = []  # 存储每一层的加权输入
         
-        epsilon = 0.001
-        
-        for layer_idx in range(len(self.network.weights)):
-            for neuron_idx in range(len(self.network.weights[layer_idx])):
-                for weight_idx in range(len(self.network.weights[layer_idx][neuron_idx])):
-                    original_value = self.network.weights[layer_idx][neuron_idx][weight_idx]
-                    
-                    self.network.weights[layer_idx][neuron_idx][weight_idx] += epsilon
-                    new_output = self.network.forward(inputs)
-                    new_loss = self.mse_loss(new_output, targets)
-                    gradient = (new_loss - original_loss) / epsilon
-                    
-                    self.network.weights[layer_idx][neuron_idx][weight_idx] = original_value - self.learning_rate * gradient
-        
-        for layer_idx in range(len(self.network.biases)):
-            for bias_idx in range(len(self.network.biases[layer_idx])):
-                original_value = self.network.biases[layer_idx][bias_idx]
+        for i, (weight_matrix, bias_vector) in enumerate(zip(self.network.weights, self.network.biases)):
+            z = []
+            a = []
+            
+            for j in range(len(weight_matrix)):
+                weighted_sum = sum(
+                    activations[-1][k] * weight_matrix[j][k] 
+                    for k in range(len(activations[-1]))
+                ) + bias_vector[j]
                 
-                self.network.biases[layer_idx][bias_idx] += epsilon
-                new_output = self.network.forward(inputs)
-                new_loss = self.mse_loss(new_output, targets)
-                gradient = (new_loss - original_loss) / epsilon
+                z.append(weight_sum)
                 
-                self.network.biases[layer_idx][bias_idx] = original_value - self.learning_rate * gradient
+                if i < len(self.network.weights) - 1:
+                    activation = self.network.relu(weighted_sum)
+                else:
+                    activation = self.network.sigmoid(weighted_sum)
+                
+                a.append(activation)
+            
+            zs.append(z)
+            activations.append(a)
+        
+        # 反向传播
+        # 输出层误差
+        output_error = [2 * (a - t) for a, t in zip(activations[-1], targets)]
+        
+        # 计算输出层梯度
+        output_delta = []
+        for i, (a, error) in enumerate(zip(activations[-1], output_error)):
+            sigmoid_derivative = a * (1 - a)  # sigmoid导数
+            output_delta.append(error * sigmoid_derivative)
+        
+        deltas = [output_delta]
+        
+        # 计算隐藏层梯度
+        for l in range(len(self.network.weights) - 2, -1, -1):
+            prev_delta = deltas[-1]
+            layer_delta = []
+            
+            for i in range(len(activations[l+1])):
+                error = sum(
+                    prev_delta[j] * self.network.weights[l+1][j][i] 
+                    for j in range(len(prev_delta))
+                )
+                
+                if l < len(self.network.weights) - 2:  # 隐藏层使用ReLU导数
+                    relu_derivative = 1 if zs[l][i] > 0 else 0
+                    layer_delta.append(error * relu_derivative)
+                else:  # 倒数第二层使用ReLU导数
+                    relu_derivative = 1 if zs[l][i] > 0 else 0
+                    layer_delta.append(error * relu_derivative)
+            
+            deltas.append(layer_delta)
+        
+        deltas.reverse()  # 使顺序与权重匹配
+        
+        # 计算权重和偏置梯度
+        weight_gradients = []
+        bias_gradients = []
+        
+        for l in range(len(self.network.weights)):
+            w_grad = []
+            b_grad = []
+            
+            for i in range(len(self.network.weights[l])):
+                row_grad = []
+                for j in range(len(self.network.weights[l][i])):
+                    grad = deltas[l][i] * activations[l][j]
+                    row_grad.append(grad)
+                w_grad.append(row_grad)
+                
+                b_grad.append(deltas[l][i])
+            
+            weight_gradients.append(w_grad)
+            bias_gradients.append(b_grad)
+        
+        return weight_gradients, bias_gradients
 
-    def train_step(self, inputs: List[float], targets: List[float]) -> Dict[str, Any]:
+    def train_step(self, inputs: List[float], targets: List[float], use_mutation: bool = False) -> Dict[str, Any]:
+        # 检查资源限制
+        if not self.safety_governance.check_resource_limit(1):
+            return {'loss': float('inf'), 'predicted': [], 'actual': targets}
+        
         predicted = self.network.forward(inputs)
         loss = self.mse_loss(predicted, targets)
         
-        self.simple_backpropagate(inputs, targets)
+        # 使用真正的梯度计算
+        weight_gradients, bias_gradients = self.compute_gradients(inputs, targets)
+        
+        # 更新权重
+        for l in range(len(self.network.weights)):
+            for i in range(len(self.network.weights[l])):
+                for j in range(len(self.network.weights[l][i])):
+                    self.network.weights[l][i][j] -= self.learning_rate * weight_gradients[l][i][j]
+        
+        # 更新偏置
+        for l in range(len(self.network.biases)):
+            for i in range(len(self.network.biases[l])):
+                self.network.biases[l][i] -= self.learning_rate * bias_gradients[l][i]
+        
+        # 根据策略决定是否应用突变
+        if use_mutation:
+            self.network.mutate(self.mutation_rate, self.mutation_strength)
         
         self.performance_history.append(loss)
         
@@ -186,22 +395,86 @@ class YouweiAI:
             'actual': targets
         }
 
+    def replay_experience(self, batch_size: int = 10):
+        """经验回放机制，从记忆中随机抽取经验进行再训练"""
+        experiences = self.memory_buffer.sample_batch(batch_size)
+        if not experiences:
+            return
+        
+        for exp in experiences:
+            # 使用当前学习参数重新训练
+            self.train_step(exp['inputs'], exp['targets'])
+
+    def adjust_strategy(self):
+        """根据性能趋势调整策略和参数"""
+        if len(self.performance_history) < 10:
+            return  # 数据不足
+        
+        # 计算最近的性能趋势
+        recent_performance = self.performance_history[-10:]
+        avg_recent = sum(recent_performance[-5:]) / 5
+        avg_prev = sum(recent_performance[:5]) / 5
+        trend = avg_recent - avg_prev
+        
+        # 选择策略
+        strategy = self.strategy_selector.evaluate_strategies(trend)
+        params = self.strategy_selector.get_strategy_params(strategy)
+        
+        # 更新参数
+        self.learning_rate = params['learning_rate']
+        self.mutation_rate = params['mutation_rate']
+        
+        # 根据策略决定是否探索新架构
+        if params['explore_new_arch'] and random.random() < 0.1:  # 10%概率探索新架构
+            if random.random() < 0.5:
+                # 尝试添加层
+                success = self.network.add_layer()
+                if success:
+                    print(f"🔄 Youwei（陆幼薇）正在尝试添加神经网络层，当前结构: {[self.network.input_size] + self.network.hidden_sizes + [self.network.output_size]}")
+            else:
+                # 尝试移除层
+                success = self.network.remove_layer()
+                if success:
+                    print(f"🔄 Youwei（陆幼薇）正在尝试移除神经网络层，当前结构: {[self.network.input_size] + self.network.hidden_sizes + [self.network.output_size]}")
+
     def evolve(self, data_generator: Callable, num_generations: int = 500, train_size: int = 20):
         print("Youwei（陆幼薇）开始小学基础学习...")
+        print("🔒 系统安全边界已设定，资源使用开始监控...")
         
-        for generation in range(num_generations):
+        # 限制进化代数
+        max_generations = min(num_generations, self.safety_governance.fixed_boundaries['max_generations'])
+        
+        for generation in range(max_generations):
+            # 检查紧急停止
+            if self.safety_governance.is_emergency_stop:
+                print("🛑 Youwei（陆幼薇）系统已响应紧急停止命令，进化过程终止！")
+                break
+            
+            # 调整策略
+            self.adjust_strategy()
+            
             total_loss = 0
             for _ in range(train_size):
                 inputs, targets = data_generator()
-                result = self.train_step(inputs, targets)
+                # 根据当前策略决定是否使用突变
+                use_mutation = random.random() < self.mutation_rate
+                result = self.train_step(inputs, targets, use_mutation)
+                if result['loss'] == float('inf'):  # 资源超限
+                    continue
                 total_loss += result['loss']
             
             avg_loss = total_loss / train_size
             
-            # 每100代输出一次状态，使用更易懂的语言
+            # 每100代进行一次经验回放
             if generation % 100 == 0:
                 print(f"第 {generation} 次课堂: 平均错误 = {avg_loss:.6f}, "
-                      f"学习劲头 = {self.learning_rate:.6f}")
+                      f"学习劲头 = {self.learning_rate:.6f}, "
+                      f"资源使用率 = {self.safety_governance.current_resource_usage}/{self.safety_governance.fixed_boundaries['resource_budget']}")
+                self.replay_experience(20)  # 回放经验
+            
+            # 每50代进行一次经验回放
+            if generation % 50 == 0 and generation > 0:
+                self.replay_experience(10)
         
         print("Youwei（陆幼薇）小学课程学习完成!")
         return self.get_summary()
@@ -243,7 +516,10 @@ class YouweiAI:
             "近期学习趋势": "明显进步" if trend == "进步" and len(self.performance_history) > 100 and self.performance_history[-1] < self.performance_history[-50] else ("明显退步" if trend != "进步" else trend),
             "学习稳定性": stability,
             "最佳表现": f"第 {best_idx} 次练习时达到" if best_idx > 0 else "仍在努力中",
-            "最终策略": self.strategy_selector.current_strategy
+            "最终策略": self.strategy_selector.current_strategy,
+            "最终网络结构": [self.network.input_size] + self.network.hidden_sizes + [self.network.output_size],
+            "资源使用量": self.safety_governance.current_resource_usage,
+            "系统状态": "正常运行" if not self.safety_governance.is_emergency_stop else "已紧急停止"
         }
 
 
@@ -306,12 +582,19 @@ def create_mixed_primary_data() -> tuple:
     创建混合的小学水平练习题（只包含加减法）
     """
     # 随机选择题目类型 - 只做数学题
-    choice = random.choice(["addition", "subtraction"])
+    choice = random.choice(["addition", "subtraction", "counting"])
     
     if choice == "addition":
         return create_simple_addition_data()
-    else:
+    elif choice == "subtraction":
         return create_simple_subtraction_data()
+    else:
+        # 降低计数题的频率，因为可能更复杂
+        if random.random() < 0.3:
+            return create_counting_data()
+        else:
+            # 返回加法或减法
+            return create_simple_addition_data() if random.random() < 0.6 else create_simple_subtraction_data()
 
 
 def display_youwei_welcome():
@@ -320,10 +603,11 @@ def display_youwei_welcome():
     print("=" * 60)
     print("Youwei是一个自我进化的AI，具有以下特性:")
     print("• 自适应学习能力")
-    print("• 动态架构调整")
-    print("• 记忆与经验积累")
-    print("• 自主策略选择")
-    print("• 持续自我优化")
+    print("• 动态架构调整（受安全边界约束）")
+    print("• 记忆与经验积累（支持经验回放）")
+    print("• 自主策略选择（根据性能调整参数）")
+    print("• 持续自我优化（在安全范围内）")
+    print("🔒 系统已启用安全治理机制")
     print("=" * 60)
 
 
@@ -335,8 +619,9 @@ def main():
     
     print("Youwei（陆幼薇）正在准备学习小学课程...")
     print("→ 创建学习大脑（模拟思维结构）")
-    print("→ 设置记忆库（用于存储学习经验）")
+    print("→ 设置记忆库（用于存储学习经验，容量受限）")
     print("→ 初始化学习参数")
+    print("→ 启动安全治理机制（资源监控、紧急停止等）")
     
     # 创建Youwei实例
     youwei = YouweiAI(input_size=4, output_size=1)
@@ -348,6 +633,8 @@ def main():
     print("  数学：5以内的加减法（适合一年级）")
     print("  语文：简单汉字识别和计数")
     print("  每次练习后，Youwei都会总结经验并改进自己")
+    print("  🔒 系统将持续监控资源使用情况，确保安全运行")
+    print("  🔄 Youwei将根据学习情况动态调整策略和网络结构")
     
     # 定义数据生成器
     def data_generator():
@@ -452,6 +739,7 @@ def main():
     
     print("\nYouwei（陆幼薇）小学课程学习完成! 系统已掌握基础数学和语文知识。")
     print("接下来可以继续学习更高级的知识！")
+    print("🔒 安全治理机制将持续守护Youwei的成长之路！")
     print("感谢使用Youwei（陆幼薇）自我进化的AI系统!")
 
 

@@ -115,7 +115,7 @@ class YouweiAI:
         
         self.network = SimpleNeuralNetwork(
             input_size=input_size,
-            hidden_sizes=[4, 4],  # 更小的网络，更适合简单任务
+            hidden_sizes=[6, 6],  # 适中的网络
             output_size=output_size
         )
         
@@ -123,9 +123,9 @@ class YouweiAI:
         self.strategy_selector = AdaptiveStrategySelector()
         self.performance_history = []
         
-        self.mutation_rate = 0.2  # 更高的变异率，促进探索
-        self.mutation_strength = 0.1  # 更强的变异力度
-        self.learning_rate = 0.05  # 更高的学习率，加快收敛速度
+        self.mutation_rate = 0.1
+        self.mutation_strength = 0.05
+        self.learning_rate = 0.1
 
     def mse_loss(self, predicted: List[float], target: List[float]) -> float:
         if len(predicted) != len(target):
@@ -138,42 +138,36 @@ class YouweiAI:
         original_output = self.network.forward(inputs)
         original_loss = self.mse_loss(original_output, targets)
         
-        original_weights = []
-        original_biases = []
-        
-        for weight_matrix in self.network.weights:
-            original_weights.append([row[:] for row in weight_matrix])
-        
-        for bias_vector in self.network.biases:
-            original_biases.append(bias_vector[:])
+        epsilon = 0.001
         
         for layer_idx in range(len(self.network.weights)):
             for neuron_idx in range(len(self.network.weights[layer_idx])):
                 for weight_idx in range(len(self.network.weights[layer_idx][neuron_idx])):
-                    self.network.weights[layer_idx][neuron_idx][weight_idx] += 0.001
+                    original_value = self.network.weights[layer_idx][neuron_idx][weight_idx]
+                    
+                    self.network.weights[layer_idx][neuron_idx][weight_idx] += epsilon
                     new_output = self.network.forward(inputs)
                     new_loss = self.mse_loss(new_output, targets)
-                    gradient = (new_loss - original_loss) / 0.001
-                    self.network.weights[layer_idx][neuron_idx][weight_idx] -= self.learning_rate * gradient
-                    self.network.weights[layer_idx][neuron_idx][weight_idx] = original_weights[layer_idx][neuron_idx][weight_idx]
+                    gradient = (new_loss - original_loss) / epsilon
+                    
+                    self.network.weights[layer_idx][neuron_idx][weight_idx] = original_value - self.learning_rate * gradient
         
         for layer_idx in range(len(self.network.biases)):
             for bias_idx in range(len(self.network.biases[layer_idx])):
-                self.network.biases[layer_idx][bias_idx] += 0.001
+                original_value = self.network.biases[layer_idx][bias_idx]
+                
+                self.network.biases[layer_idx][bias_idx] += epsilon
                 new_output = self.network.forward(inputs)
                 new_loss = self.mse_loss(new_output, targets)
-                gradient = (new_loss - original_loss) / 0.001
-                self.network.biases[layer_idx][bias_idx] -= self.learning_rate * gradient
-                self.network.biases[layer_idx][bias_idx] = original_biases[layer_idx][bias_idx]
+                gradient = (new_loss - original_loss) / epsilon
+                
+                self.network.biases[layer_idx][bias_idx] = original_value - self.learning_rate * gradient
 
     def train_step(self, inputs: List[float], targets: List[float]) -> Dict[str, Any]:
         predicted = self.network.forward(inputs)
         loss = self.mse_loss(predicted, targets)
         
         self.simple_backpropagate(inputs, targets)
-        
-        # 增强变异以帮助学习
-        self.network.mutate(self.mutation_rate, self.mutation_strength)
         
         self.performance_history.append(loss)
         
@@ -274,7 +268,7 @@ def create_simple_subtraction_data() -> tuple:
     a = random.randint(3, 5)
     b = random.randint(1, a)  # b不能大于a，避免负数
     inputs = [float(a)/5.0, float(b)/5.0, 0.0, 0.0]  # 归一化输入
-    targets = [float(a - b)/5.0]  # 归一化输出到[0,1]，最大值为5
+    targets = [float(a - b)/10.0]  # 统一使用/10.0 归一化，与加法保持一致
     
     return inputs, targets
 
@@ -282,38 +276,42 @@ def create_simple_subtraction_data() -> tuple:
 def create_counting_data() -> tuple:
     """
     创建小学水平的计数练习题（简单汉字）
+    改进：使用位置无关的特征，帮助网络学习计数任务
     """
     # 生成简单的计数题
     word_count = random.randint(2, 5)  # 减少计数范围
     words = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "花", "草", "树", "鸟"]
     sentence = "".join(random.choices(words, k=word_count))
     
-    # 将字符转换为数值特征
-    char_values = [ord(c) / 10000.0 for c in sentence]
-    inputs = [0.0, 0.0, 0.0, 0.0]  # 初始化4个输入
+    # 改进的特征工程：使用与位置无关的统计特征
+    char_codes = [ord(c) for c in sentence]
+    mean_code = sum(char_codes) / len(char_codes) / 10000.0
     
-    # 取前4个字符，如果不够则用0填充
-    for i in range(min(len(char_values), 4)):
-        inputs[i] = char_values[i]
+    if len(char_codes) > 1:
+        variance = sum((c - sum(char_codes)/len(char_codes))**2 for c in char_codes) / len(char_codes)
+        std_code = (variance ** 0.5) / 10000.0
+    else:
+        std_code = 0.0
     
-    targets = [word_count / 5.0]  # 输出句子长度，归一化到[0,1]
+    # 特征 3-4: 包含字数信息，让网络更容易学习
+    inputs = [mean_code, std_code, float(word_count) / 10.0, 0.0]
+    
+    targets = [word_count / 10.0]  # 统一使用/10.0 归一化
     
     return inputs, targets
 
 
 def create_mixed_primary_data() -> tuple:
     """
-    创建混合的小学水平练习题（数学和语文）
+    创建混合的小学水平练习题（只包含加减法）
     """
-    # 随机选择题目类型
-    choice = random.choice(["addition", "subtraction", "counting"])
+    # 随机选择题目类型 - 只做数学题
+    choice = random.choice(["addition", "subtraction"])
     
     if choice == "addition":
         return create_simple_addition_data()
-    elif choice == "subtraction":
-        return create_simple_subtraction_data()
     else:
-        return create_counting_data()
+        return create_simple_subtraction_data()
 
 
 def display_youwei_welcome():
@@ -356,7 +354,7 @@ def main():
         return create_mixed_primary_data()
     
     # 运行学习过程
-    results = youwei.evolve(data_generator, num_generations=300, train_size=10)
+    results = youwei.evolve(data_generator, num_generations=500, train_size=15)
     
     print("\nYouwei小学课程学习总结:")
     for key, value in results.items():
@@ -417,11 +415,19 @@ def main():
         words = ["一", "二", "三", "花", "草", "树"]
         sentence_len = random.randint(1, 3)
         sentence = "".join(random.choices(words, k=sentence_len))
-        char_values = [ord(c) / 10000.0 for c in sentence]
-        inputs = [0.0, 0.0, 0.0, 0.0]
-        for j in range(min(len(char_values), 4)):
-            inputs[j] = char_values[j]
-        actual_output = youwei.network.forward(inputs)[0] * 3  # 反归一化输出
+        
+        # 使用与训练时相同的特征工程
+        char_codes = [ord(c) for c in sentence]
+        mean_code = sum(char_codes) / len(char_codes) / 10000.0
+        
+        if len(char_codes) > 1:
+            variance = sum((c - sum(char_codes)/len(char_codes))**2 for c in char_codes) / len(char_codes)
+            std_code = (variance ** 0.5) / 10000.0
+        else:
+            std_code = 0.0
+        
+        inputs = [mean_code, std_code, float(sentence_len) / 10.0, 0.0]
+        actual_output = youwei.network.forward(inputs)[0] * 10  # 反归一化输出（统一使用/10.0）
         estimated_len = round(actual_output)
         print(f"    句子: '{sentence}' (共{sentence_len}个字)")
         print(f"      Youwei估算: {estimated_len}个字")

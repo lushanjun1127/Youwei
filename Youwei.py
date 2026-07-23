@@ -3,16 +3,13 @@ Youwei（陆幼薇）- 自我进化的AI系统
 主启动程序
 """
 
-import sys
-import os
 import random
 import math
-import json
 from typing import List, Dict, Any, Callable
 from datetime import datetime
 import statistics
 import threading
-import time
+
 
 try:
     import tkinter as tk
@@ -707,7 +704,10 @@ def create_generic_data() -> tuple:
     """
     # 生成随机输入和目标值
     inputs = [random.random() for _ in range(4)]  # 4维输入
-    targets = [sum(inputs) / 4]  # 目标是平均值，但可以调整
+    # 目标是输入值的加权平均，使问题更有趣
+    weights = [random.uniform(0.5, 1.5) for _ in range(4)]
+    weighted_sum = sum(input_val * weight for input_val, weight in zip(inputs, weights))
+    targets = [weighted_sum / 4]  # 目标是加权平均值
     
     return inputs, targets
 

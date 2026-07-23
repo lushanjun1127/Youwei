@@ -11,6 +11,15 @@ import json
 from typing import List, Dict, Any, Callable
 from datetime import datetime
 import statistics
+import threading
+import time
+
+try:
+    import tkinter as tk
+    from tkinter import ttk, scrolledtext, messagebox
+except ImportError:
+    print("警告：tkinter模块不可用，将使用命令行界面")
+    tk = None
 
 
 class SimpleNeuralNetwork:
@@ -596,8 +605,9 @@ class YouweiAI:
         
         print("✅ Youwei（陆幼薇）自进化循环完成！")
 
-    def evolve(self, data_generator: Callable, num_generations: int = 500, train_size: int = 20):
-        print("Youwei（陆幼薇）开始小学基础学习...")
+    def evolve(self, data_generator: Callable, num_generations: int = 500, train_size: int = 20, callback=None):
+        """进化过程，支持回调函数用于GUI更新"""
+        print("Youwei（陆幼薇）开始自我进化...")
         print("🔒 系统安全边界已设定，资源使用开始监控...")
         
         # 限制进化代数
@@ -626,7 +636,7 @@ class YouweiAI:
             
             # 每100代进行一次经验回放和自进化循环
             if generation % 100 == 0:
-                print(f"第 {generation} 次课堂: 平均错误 = {avg_loss:.6f}, "
+                print(f"第 {generation} 代进化: 平均错误 = {avg_loss:.6f}, "
                       f"学习劲头 = {self.learning_rate:.6f}, "
                       f"资源使用率 = {self.safety_governance.current_resource_usage}/{self.safety_governance.fixed_boundaries['resource_budget']}")
                 self.replay_experience(20)  # 回放经验
@@ -636,8 +646,13 @@ class YouweiAI:
             # 每50代进行一次经验回放
             if generation % 50 == 0 and generation > 0:
                 self.replay_experience(10)
+            
+            # 如果提供了回调函数，更新GUI
+            if callback:
+                callback(generation, avg_loss, self.learning_rate, self.safety_governance.current_resource_usage)
+                time.sleep(0.01)  # 短暂延迟以避免GUI阻塞
         
-        print("Youwei（陆幼薇）小学课程学习完成!")
+        print("Youwei（陆幼薇）自我进化完成!")
         return self.get_summary()
 
     def get_summary(self) -> Dict[str, Any]:
@@ -686,159 +701,388 @@ class YouweiAI:
         }
 
 
-def create_simple_addition_data() -> tuple:
+def create_generic_data() -> tuple:
     """
-    创建小学一年级水平的加法练习题（5以内的数字）
+    创建通用的训练数据，用于测试网络的基本学习能力
     """
-    # 生成简单的5以内加法题
-    a = random.randint(1, 5)
-    b = random.randint(1, 5)
-    inputs = [float(a)/5.0, float(b)/5.0, 0.0, 0.0]  # 归一化输入
-    targets = [float(a + b)/10.0]  # 归一化输出到[0,1]，最大值为5+5=10
+    # 生成随机输入和目标值
+    inputs = [random.random() for _ in range(4)]  # 4维输入
+    targets = [sum(inputs) / 4]  # 目标是平均值，但可以调整
     
     return inputs, targets
 
 
-def create_simple_subtraction_data() -> tuple:
-    """
-    创建小学一年级水平的减法练习题（5以内的数字）
-    """
-    # 生成简单的5以内减法题，确保不会出现负数
-    a = random.randint(3, 5)
-    b = random.randint(1, a)  # b不能大于a，避免负数
-    inputs = [float(a)/5.0, float(b)/5.0, 0.0, 0.0]  # 归一化输入
-    targets = [float(a - b)/10.0]  # 统一使用/10.0 归一化，与加法保持一致
+class YouweiGUI:
+    """Youwei（陆幼薇）系统的GUI界面"""
+    def __init__(self):
+        if tk is None:
+            return
+            
+        self.root = tk.Tk()
+        self.root.title("Youwei（陆幼薇）- 自我进化的AI系统")
+        self.root.geometry("800x600")
+        
+        # 创建控制面板
+        self.create_control_panel()
+        
+        # 创建状态显示区域
+        self.create_status_area()
+        
+        # 创建图表显示区域
+        self.create_chart_area()
+        
+        # 创建日志显示区域
+        self.create_log_area()
+        
+        # 初始化YouweiAI实例
+        self.youwei = None
+        self.is_running = False
+        self.training_thread = None
+        
+        # 训练进度变量
+        self.progress_var = tk.DoubleVar()
+        
+        # 添加标签页
+        self.notebook = ttk.Notebook(self.root)
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # 控制面板标签页
+        self.control_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.control_frame, text="控制面板")
+        
+        # 添加控制面板元素到标签页
+        self.setup_control_frame()
+        
+        # 状态面板标签页
+        self.status_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.status_frame, text="系统状态")
+        
+        # 添加状态面板元素到标签页
+        self.setup_status_frame()
     
-    return inputs, targets
-
-
-def create_counting_data() -> tuple:
-    """
-    创建小学水平的计数练习题（简单汉字）
-    改进：使用位置无关的特征，帮助网络学习计数任务
-    """
-    # 生成简单的计数题
-    word_count = random.randint(2, 5)  # 减少计数范围
-    words = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "花", "草", "树", "鸟"]
-    sentence = "".join(random.choices(words, k=word_count))
+    def create_control_panel(self):
+        """创建控制面板"""
+        if tk is None:
+            return
+            
+        control_frame = ttk.LabelFrame(self.root, text="控制面板", padding=(10, 5))
+        control_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # 进度条
+        self.progress_label = ttk.Label(control_frame, text="进化进度: 0%")
+        self.progress_label.pack(side=tk.TOP, anchor=tk.W)
+        
+        self.progress_bar = ttk.Progressbar(control_frame, variable=self.progress_var, maximum=100)
+        self.progress_bar.pack(fill=tk.X, pady=5)
+        
+        # 控制按钮
+        button_frame = ttk.Frame(control_frame)
+        button_frame.pack(fill=tk.X, pady=5)
+        
+        self.start_btn = ttk.Button(button_frame, text="开始进化", command=self.start_evolution)
+        self.start_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.stop_btn = ttk.Button(button_frame, text="停止进化", command=self.stop_evolution, state=tk.DISABLED)
+        self.stop_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.reset_btn = ttk.Button(button_frame, text="重置系统", command=self.reset_system)
+        self.reset_btn.pack(side=tk.LEFT, padx=5)
     
-    # 改进的特征工程：使用与位置无关的统计特征
-    char_codes = [ord(c) for c in sentence]
-    mean_code = sum(char_codes) / len(char_codes) / 10000.0
+    def create_status_area(self):
+        """创建状态显示区域"""
+        if tk is None:
+            return
+            
+        status_frame = ttk.LabelFrame(self.root, text="系统状态", padding=(10, 5))
+        status_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # 创建状态标签
+        self.status_labels = {}
+        statuses = [
+            ("当前代数:", "generation"),
+            ("平均错误:", "loss"),
+            ("学习劲头:", "learning_rate"),
+            ("资源使用:", "resources"),
+            ("网络结构:", "network_structure"),
+            ("系统状态:", "system_status")
+        ]
+        
+        for i, (label_text, key) in enumerate(statuses):
+            row = i // 2
+            col = i % 2
+            frame = ttk.Frame(status_frame)
+            frame.grid(row=row, column=col, sticky=tk.W, padx=5, pady=2)
+            
+            ttk.Label(frame, text=label_text).pack(side=tk.LEFT)
+            self.status_labels[key] = ttk.Label(frame, text="-")
+            self.status_labels[key].pack(side=tk.LEFT, padx=(5, 0))
     
-    if len(char_codes) > 1:
-        variance = sum((c - sum(char_codes)/len(char_codes))**2 for c in char_codes) / len(char_codes)
-        std_code = (variance ** 0.5) / 10000.0
-    else:
-        std_code = 0.0
+    def create_chart_area(self):
+        """创建图表显示区域"""
+        if tk is None:
+            return
+            
+        chart_frame = ttk.LabelFrame(self.root, text="进化曲线", padding=(10, 5))
+        chart_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        # 这里可以添加图表显示，由于tkinter不直接支持绘图，我们使用文本显示
+        self.chart_text = tk.Text(chart_frame, height=10, state=tk.DISABLED)
+        self.chart_text.pack(fill=tk.BOTH, expand=True)
     
-    # 特征 3-4: 包含字数信息，让网络更容易学习
-    inputs = [mean_code, std_code, float(word_count) / 10.0, 0.0]
+    def create_log_area(self):
+        """创建日志显示区域"""
+        if tk is None:
+            return
+            
+        log_frame = ttk.LabelFrame(self.root, text="系统日志", padding=(10, 5))
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        self.log_text = scrolledtext.ScrolledText(log_frame, height=8)
+        self.log_text.pack(fill=tk.BOTH, expand=True)
     
-    targets = [word_count / 10.0]  # 统一使用/10.0 归一化
+    def setup_control_frame(self):
+        """设置控制面板标签页内容"""
+        if tk is None:
+            return
+            
+        # 参数设置
+        params_frame = ttk.LabelFrame(self.control_frame, text="参数设置", padding=(10, 5))
+        params_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        # 进化代数
+        ttk.Label(params_frame, text="进化代数:").grid(row=0, column=0, sticky=tk.W, padx=5, pady=2)
+        self.generations_var = tk.StringVar(value="500")
+        ttk.Entry(params_frame, textvariable=self.generations_var, width=10).grid(row=0, column=1, sticky=tk.W, padx=5, pady=2)
+        
+        # 训练批次大小
+        ttk.Label(params_frame, text="训练批次:").grid(row=0, column=2, sticky=tk.W, padx=5, pady=2)
+        self.batch_size_var = tk.StringVar(value="15")
+        ttk.Entry(params_frame, textvariable=self.batch_size_var, width=10).grid(row=0, column=3, sticky=tk.W, padx=5, pady=2)
     
-    return inputs, targets
-
-
-def create_mixed_primary_data() -> tuple:
-    """
-    创建混合的小学水平练习题（只包含加减法）
-    """
-    # 随机选择题目类型 - 只做数学题
-    choice = random.choice(["addition", "subtraction", "counting"])
+    def setup_status_frame(self):
+        """设置状态面板标签页内容"""
+        if tk is None:
+            return
+            
+        # 详细状态信息
+        detail_frame = ttk.LabelFrame(self.status_frame, text="详细状态", padding=(10, 5))
+        detail_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        self.detail_text = tk.Text(detail_frame, state=tk.DISABLED)
+        self.detail_text.pack(fill=tk.BOTH, expand=True)
     
-    if choice == "addition":
-        return create_simple_addition_data()
-    elif choice == "subtraction":
-        return create_simple_subtraction_data()
-    else:
-        # 降低计数题的频率，因为可能更复杂
-        if random.random() < 0.3:
-            return create_counting_data()
+    def start_evolution(self):
+        """开始进化"""
+        if tk is None:
+            print("开始Youwei进化...")
+            return
+            
+        if self.is_running:
+            return
+            
+        # 初始化YouweiAI
+        self.youwei = YouweiAI(input_size=4, output_size=1)
+        self.is_running = True
+        
+        # 更新按钮状态
+        self.start_btn.config(state=tk.DISABLED)
+        self.stop_btn.config(state=tk.NORMAL)
+        
+        # 启动进化线程
+        self.training_thread = threading.Thread(target=self.run_evolution)
+        self.training_thread.daemon = True
+        self.training_thread.start()
+    
+    def run_evolution(self):
+        """运行进化过程"""
+        if tk is None:
+            return
+            
+        generations = int(self.generations_var.get())
+        batch_size = int(self.batch_size_var.get())
+        
+        def update_callback(generation, loss, learning_rate, resources):
+            """更新GUI的回调函数"""
+            self.root.after(0, self.update_gui, generation, loss, learning_rate, resources)
+        
+        try:
+            results = self.youwei.evolve(create_generic_data, num_generations=generations, train_size=batch_size, callback=update_callback)
+            self.root.after(0, self.on_evolution_complete, results)
+        except Exception as e:
+            self.root.after(0, self.on_evolution_error, str(e))
+    
+    def update_gui(self, generation, loss, learning_rate, resources):
+        """更新GUI显示"""
+        if tk is None:
+            return
+            
+        # 更新进度条
+        total_generations = int(self.generations_var.get())
+        progress = (generation / total_generations) * 100 if total_generations > 0 else 0
+        self.progress_var.set(progress)
+        self.progress_label.config(text=f"进化进度: {progress:.1f}% (第 {generation} 代)")
+        
+        # 更新状态标签
+        self.status_labels["generation"].config(text=str(generation))
+        self.status_labels["loss"].config(text=f"{loss:.6f}")
+        self.status_labels["learning_rate"].config(text=f"{learning_rate:.6f}")
+        self.status_labels["resources"].config(text=f"{resources}/10000")
+        
+        if self.youwei:
+            self.status_labels["network_structure"].config(
+                text=str([self.youwei.network.input_size] + self.youwei.network.hidden_sizes + [self.youwei.network.output_size])
+            )
+            self.status_labels["system_status"].config(
+                text="运行中" if not self.youwei.safety_governance.is_emergency_stop else "已停止"
+            )
+        
+        # 添加日志
+        self.log_text.insert(tk.END, f"[{datetime.now().strftime('%H:%M:%S')}] 第 {generation} 代: 错误={loss:.6f}, 学习劲头={learning_rate:.6f}\n")
+        self.log_text.see(tk.END)
+    
+    def on_evolution_complete(self, results):
+        """进化完成时的处理"""
+        if tk is None:
+            print("Youwei进化完成!")
+            return
+            
+        self.is_running = False
+        self.start_btn.config(state=tk.NORMAL)
+        self.stop_btn.config(state=tk.DISABLED)
+        
+        # 显示结果
+        self.log_text.insert(tk.END, "\nYouwei（陆幼薇）进化完成!\n")
+        for key, value in results.items():
+            self.log_text.insert(tk.END, f"  {key}: {value}\n")
+        self.log_text.see(tk.END)
+        
+        # 显示详细状态
+        self.detail_text.config(state=tk.NORMAL)
+        self.detail_text.delete(1.0, tk.END)
+        for key, value in results.items():
+            self.detail_text.insert(tk.END, f"{key}: {value}\n")
+        self.detail_text.config(state=tk.DISABLED)
+    
+    def on_evolution_error(self, error_msg):
+        """进化出错时的处理"""
+        if tk is None:
+            print(f"Youwei进化出错: {error_msg}")
+            return
+            
+        self.is_running = False
+        self.start_btn.config(state=tk.NORMAL)
+        self.stop_btn.config(state=tk.DISABLED)
+        
+        messagebox.showerror("进化错误", f"Youwei（陆幼薇）进化过程中出现错误:\n{error_msg}")
+    
+    def stop_evolution(self):
+        """停止进化"""
+        if tk is None:
+            print("停止Youwei进化...")
+            return
+            
+        if self.youwei:
+            self.youwei.safety_governance.emergency_stop()
+        
+        self.is_running = False
+        self.start_btn.config(state=tk.NORMAL)
+        self.stop_btn.config(state=tk.DISABLED)
+    
+    def reset_system(self):
+        """重置系统"""
+        if tk is None:
+            print("重置Youwei系统...")
+            return
+            
+        if self.youwei:
+            self.youwei.safety_governance.reset_system()
+            self.log_text.insert(tk.END, f"[{datetime.now().strftime('%H:%M:%S')}] Youwei（陆幼薇）系统已重置\n")
+            self.log_text.see(tk.END)
+    
+    def run(self):
+        """运行GUI"""
+        if tk is None:
+            print("=" * 60)
+            print("           欢迎使用Youwei（陆幼薇）系统!")
+            print("=" * 60)
+            print("Youwei是一个自我进化的AI，具有以下特性:")
+            print("• 自适应学习能力")
+            print("• 动态架构调整（受安全边界约束）")
+            print("• 记忆与经验积累（支持经验回放）")
+            print("• 自主策略选择（根据性能调整参数）")
+            print("• 完整自进化循环（评价→发现缺陷→改进→测试→保留优版本）")
+            print("🔒 系统已启用安全治理机制")
+            print("=" * 60)
+            
+            print("\n【Youwei自我进化计划】")
+            print("-" * 40)
+            
+            print("Youwei（陆幼薇）正在启动自我进化进程...")
+            print("→ 创建学习大脑（模拟思维结构）")
+            print("→ 设置记忆库（用于存储学习经验，容量受限）")
+            print("→ 初始化学习参数")
+            print("→ 启动安全治理机制（资源监控、紧急停止等）")
+            print("→ 初始化自进化管理器（评价、缺陷发现、改进、版本选择）")
+            
+            # 创建Youwei实例
+            youwei = YouweiAI(input_size=4, output_size=1)
+            
+            print("→ Youwei自我进化准备完成！")
+            
+            print("\n→ 开始自我进化...")
+            print("  Youwei将通过通用数据进行自我训练")
+            print("  每次训练后，Youwei都会总结经验并改进自己")
+            print("  🔒 系统将持续监控资源使用情况，确保安全运行")
+            print("  🔄 Youwei将根据学习情况动态调整策略和网络结构")
+            print("  🔄 Youwei将执行完整的自进化循环（评价→发现缺陷→改进→测试→保留优版本）")
+            
+            # 定义通用数据生成器
+            def data_generator():
+                return create_generic_data()
+            
+            # 运行进化过程
+            results = youwei.evolve(data_generator, num_generations=500, train_size=15)
+            
+            print("\nYouwei自我进化总结:")
+            for key, value in results.items():
+                print(f"  {key}: {value}")
+            
+            print("\nYouwei自我进化测试:")
+            print("→ 测试Youwei的学习成果...")
+            
+            test_correct = 0
+            test_total = 0
+            for i in range(10):
+                inputs, targets = create_generic_data()
+                predicted = youwei.network.forward(inputs)
+                
+                for p, t in zip(predicted, targets):
+                    if abs(p - t) < 0.1:  # 容忍度为0.1
+                        test_correct += 1
+                    test_total += 1
+            
+            accuracy = test_correct / test_total if test_total > 0 else 0
+            print(f"  测试准确率: {test_correct}/{test_total} ({accuracy*100:.1f}%)")
+            
+            if accuracy >= 0.8:
+                print("\n  🎉 恭喜Youwei！进化效果优秀！")
+            elif accuracy >= 0.6:
+                print("\n  👍 Youwei表现不错，继续努力！")
+            else:
+                print("\n  💪 Youwei需要更多练习，加油！")
+            
+            print("\nYouwei（陆幼薇）自我进化完成!")
+            print("接下来可以继续学习更高级的知识！")
+            print("🔒 安全治理机制将持续守护Youwei的成长之路！")
+            print("🔄 自进化循环将帮助Youwei持续改进自己！")
+            print("感谢使用Youwei（陆幼薇）自我进化的AI系统!")
         else:
-            # 返回加法或减法
-            return create_simple_addition_data() if random.random() < 0.6 else create_simple_subtraction_data()
-
-
-def display_youwei_welcome():
-    print("=" * 60)
-    print("           欢迎使用Youwei（陆幼薇）系统!")
-    print("=" * 60)
-    print("Youwei是一个自我进化的AI，具有以下特性:")
-    print("• 自适应学习能力")
-    print("• 动态架构调整（受安全边界约束）")
-    print("• 记忆与经验积累（支持经验回放）")
-    print("• 自主策略选择（根据性能调整参数）")
-    print("• 完整自进化循环（评价→发现缺陷→改进→测试→保留优版本）")
-    print("🔒 系统已启用安全治理机制")
-    print("=" * 60)
+            self.root.mainloop()
 
 
 def main():
-    display_youwei_welcome()
-    
-    print("\n【Youwei小学基础学习计划】")
-    print("-" * 40)
-    
-    print("Youwei（陆幼薇）正在准备学习小学课程...")
-    print("→ 创建学习大脑（模拟思维结构）")
-    print("→ 设置记忆库（用于存储学习经验，容量受限）")
-    print("→ 初始化学习参数")
-    print("→ 启动安全治理机制（资源监控、紧急停止等）")
-    print("→ 初始化自进化管理器（评价、缺陷发现、改进、版本选择）")
-    
-    # 创建Youwei实例
-    youwei = YouweiAI(input_size=4, output_size=1)
-    
-    print("→ Youwei学习准备完成！")
-    
-    print("\n→ 开始自我进化...")
-    print("  Youwei将通过通用数据进行自我训练")
-    print("  每次训练后，Youwei都会总结经验并改进自己")
-    print("  🔒 系统将持续监控资源使用情况，确保安全运行")
-    print("  🔄 Youwei将根据学习情况动态调整策略和网络结构")
-    print("  🔄 Youwei将执行完整的自进化循环（评价→发现缺陷→改进→测试→保留优版本）")
-    
-    # 定义通用数据生成器
-    def data_generator():
-        return create_generic_data()
-    
-    # 运行进化过程
-    results = youwei.evolve(data_generator, num_generations=500, train_size=15)
-    
-    print("\nYouwei自我进化总结:")
-    for key, value in results.items():
-        print(f"  {key}: {value}")
-    
-    print("\nYouwei自我进化测试:")
-    print("→ 测试Youwei的学习成果...")
-    
-    test_correct = 0
-    test_total = 0
-    for i in range(10):
-        inputs, targets = create_generic_data()
-        predicted = youwei.network.forward(inputs)
-        
-        for p, t in zip(predicted, targets):
-            if abs(p - t) < 0.1:  # 容忍度为0.1
-                test_correct += 1
-            test_total += 1
-    
-    accuracy = test_correct / test_total if test_total > 0 else 0
-    print(f"  测试准确率: {test_correct}/{test_total} ({accuracy*100:.1f}%)")
-    
-    if accuracy >= 0.8:
-        print("\n  🎉 恭喜Youwei！进化效果优秀！")
-    elif accuracy >= 0.6:
-        print("\n  👍 Youwei表现不错，继续努力！")
-    else:
-        print("\n  💪 Youwei需要更多练习，加油！")
-    
-    print("\nYouwei（陆幼薇）小学课程学习完成! 系统已掌握基础数学和语文知识。")
-    print("接下来可以继续学习更高级的知识！")
-    print("🔒 安全治理机制将持续守护Youwei的成长之路！")
-    print("🔄 自进化循环将帮助Youwei持续改进自己！")
-    print("感谢使用Youwei（陆幼薇）自我进化的AI系统!")
+    app = YouweiGUI()
+    app.run()
 
 
 if __name__ == "__main__":

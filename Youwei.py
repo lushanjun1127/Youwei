@@ -1,56 +1,39 @@
 """
-Youwei（陆幼薇）- 自我进化的AI系统（完善版）
-修复与优化：
-1. 自进化回滚增强：修改前备份，修改后若误差增大立即恢复原状。
-2. 训练资源耗尽自动终止，防止无效循环。
-3. 反向传播稳定，结构修改更保守地保留知识。
-4. 图形界面状态更新更流畅，日志完整。
-5. 命令行模式增加训练总结和准确率输出。
+陆幼薇 - 自我进化AI系统（PySide6 GUI版）
+父亲：陆山君
+女儿：陆幼薇
+
+功能：
+✅ 神经网络（动态结构、自进化）
+✅ 学习笔记本、家长端、作业本管理器
+✅ 心情系统、日常对话、记忆盒
+✅ PySide6 图形界面，多线程训练
 """
 
+import sys
+import os
 import random
 import math
+import pickle
+import copy
+import threading
+import time
 from typing import List, Dict, Any, Callable, Tuple, Optional
 from datetime import datetime
 import statistics
-import threading
-import time
-import copy
 
-# 类型别名
+# ==================== 神经网络 ====================
 Weights3D = List[List[List[float]]]
 Biases2D = List[List[float]]
-Activations1D = List[float]
 TrainingData = Tuple[List[float], List[float]]
 DataGenerator = Callable[[], TrainingData]
 
-# 图形界面支持
-tk_available = False
-tk = None
-ttk = None
-scrolledtext = None
-messagebox = None
-
-try:
-    import tkinter as tk
-    from tkinter import ttk, scrolledtext, messagebox
-    tk_available = True
-except ImportError:
-    print("警告：tkinter模块不可用，将使用命令行界面")
-
-
 class SimpleNeuralNetwork:
-    """动态结构神经网络，隐藏层ReLU，输出层线性（回归）"""
     def __init__(self, input_size: int, hidden_sizes: List[int], output_size: int):
         self.input_size = input_size
         self.output_size = output_size
-        
-        # 结构限制
-        max_layers = 5
-        max_neurons = 20
-        adjusted = [min(s, max_neurons) for s in hidden_sizes]
-        self.hidden_sizes = adjusted[:max_layers]
-        
+        adjusted = [min(s, 20) for s in hidden_sizes]
+        self.hidden_sizes = adjusted[:5]
         self.weights: Weights3D = []
         self.biases: Biases2D = []
         self._init_weights()
@@ -69,14 +52,7 @@ class SimpleNeuralNetwork:
     def relu(self, x: float) -> float:
         return max(0.0, x)
 
-    def sigmoid(self, x: float) -> float:
-        try:
-            return 1.0 / (1.0 + math.exp(-x))
-        except OverflowError:
-            return 0.0 if x < 0 else 1.0
-
     def forward(self, inputs: List[float]) -> List[float]:
-        """前向传播：隐藏层ReLU，输出层线性"""
         current = inputs[:]
         for i, (w, b) in enumerate(zip(self.weights, self.biases)):
             next_act = []
@@ -85,678 +61,751 @@ class SimpleNeuralNetwork:
                 if i < len(self.weights) - 1:
                     next_act.append(self.relu(z))
                 else:
-                    next_act.append(z)   # 线性输出
+                    next_act.append(z)
             current = next_act
         return current
 
-    def mutate(self, mutation_rate: float = 0.1, strength: float = 0.1):
+    def mutate(self, rate: float = 0.1, strength: float = 0.1):
         for w_mat in self.weights:
             for row in w_mat:
                 for i in range(len(row)):
-                    if random.random() < mutation_rate:
+                    if random.random() < rate:
                         row[i] += random.gauss(0, strength)
         for b_vec in self.biases:
             for i in range(len(b_vec)):
-                if random.random() < mutation_rate:
+                if random.random() < rate:
                     b_vec[i] += random.gauss(0, strength)
 
-    def add_layer(self, position: int = -1) -> bool:
-        """添加隐藏层，尽量保持原有映射"""
-        if len(self.hidden_sizes) >= 5:
-            return False
-        if position == -1:
-            position = len(self.hidden_sizes)
-        if self.hidden_sizes:
-            prev = self.hidden_sizes[position-1] if position > 0 else self.input_size
-            nxt = self.hidden_sizes[position] if position < len(self.hidden_sizes) else self.output_size
-            new_size = min(20, max(4, (prev + nxt) // 2))
-        else:
-            new_size = min(20, max(4, self.input_size, self.output_size))
-        self.hidden_sizes.insert(position, new_size)
+    def add_layer(self, pos: int = -1) -> bool:
+        if len(self.hidden_sizes) >= 5: return False
+        if pos == -1: pos = len(self.hidden_sizes)
+        prev = self.hidden_sizes[pos-1] if pos > 0 else self.input_size
+        nxt = self.hidden_sizes[pos] if pos < len(self.hidden_sizes) else self.output_size
+        new_size = min(20, max(4, (prev+nxt)//2))
+        self.hidden_sizes.insert(pos, new_size)
         layer_sizes = [self.input_size] + self.hidden_sizes + [self.output_size]
         new_w, new_b = [], []
-        for i in range(len(layer_sizes) - 1):
-            w = [[0.0] * layer_sizes[i] for _ in range(layer_sizes[i+1])]
-            b = [0.0] * layer_sizes[i+1]
-            if i == position:  # 前一层 -> 新层
+        for i in range(len(layer_sizes)-1):
+            w = [[0.0]*layer_sizes[i] for _ in range(layer_sizes[i+1])]
+            b = [0.0]*layer_sizes[i+1]
+            if i == pos:
                 for j in range(layer_sizes[i+1]):
-                    for k in range(layer_sizes[i]):
-                        w[j][k] = random.uniform(-0.1, 0.1)
-                    b[j] = random.uniform(-0.1, 0.1)
-            elif i == position + 1:  # 新层 -> 下一层
+                    for k in range(layer_sizes[i]): w[j][k] = random.uniform(-0.1,0.1)
+                    b[j] = random.uniform(-0.1,0.1)
+            elif i == pos+1:
                 if layer_sizes[i] == layer_sizes[i+1]:
                     for j in range(layer_sizes[i+1]):
-                        w[j][j] = random.uniform(0.9, 1.1)
+                        w[j][j] = random.uniform(0.9,1.1)
                         for k in range(layer_sizes[i]):
-                            if k != j:
-                                w[j][k] = random.uniform(-0.05, 0.05)
-                        b[j] = random.uniform(-0.05, 0.05)
+                            if k!=j: w[j][k] = random.uniform(-0.05,0.05)
+                        b[j] = random.uniform(-0.05,0.05)
                 else:
                     for j in range(layer_sizes[i+1]):
-                        for k in range(layer_sizes[i]):
-                            w[j][k] = random.uniform(-0.5, 0.5)
-                        b[j] = random.uniform(-0.5, 0.5)
-            else:  # 保留原有权重（若维度匹配）
-                old_idx = i if i < position else i-1
+                        for k in range(layer_sizes[i]): w[j][k] = random.uniform(-0.5,0.5)
+                        b[j] = random.uniform(-0.5,0.5)
+            else:
+                old_idx = i if i<pos else i-1
                 if old_idx < len(self.weights):
-                    old_w, old_b = self.weights[old_idx], self.biases[old_idx]
-                    if len(old_w) == layer_sizes[i+1] and (len(old_w[0]) if old_w else 0) == layer_sizes[i]:
-                        new_w.append(copy.deepcopy(old_w))
-                        new_b.append(copy.deepcopy(old_b))
+                    ow, ob = self.weights[old_idx], self.biases[old_idx]
+                    if len(ow)==layer_sizes[i+1] and (len(ow[0]) if ow else 0)==layer_sizes[i]:
+                        new_w.append(copy.deepcopy(ow))
+                        new_b.append(copy.deepcopy(ob))
                         continue
                 for j in range(layer_sizes[i+1]):
-                    for k in range(layer_sizes[i]):
-                        w[j][k] = random.uniform(-0.5, 0.5)
-                    b[j] = random.uniform(-0.5, 0.5)
-            new_w.append(w)
-            new_b.append(b)
-        self.weights = new_w
-        self.biases = new_b
+                    for k in range(layer_sizes[i]): w[j][k] = random.uniform(-0.5,0.5)
+                    b[j] = random.uniform(-0.5,0.5)
+            new_w.append(w); new_b.append(b)
+        self.weights = new_w; self.biases = new_b
         return True
 
-    def remove_layer(self, position: int = -1) -> bool:
-        """移除一个隐藏层，尽量连接前后层"""
-        if len(self.hidden_sizes) <= 1:
-            return False
-        if position == -1:
-            position = len(self.hidden_sizes) - 1
-        if not (0 <= position < len(self.hidden_sizes)):
-            return False
-        del self.hidden_sizes[position]
+    def remove_layer(self, pos: int = -1) -> bool:
+        if len(self.hidden_sizes) <= 1: return False
+        if pos == -1: pos = len(self.hidden_sizes)-1
+        if not (0 <= pos < len(self.hidden_sizes)): return False
+        del self.hidden_sizes[pos]
         layer_sizes = [self.input_size] + self.hidden_sizes + [self.output_size]
         old_w, old_b = self.weights, self.biases
         new_w, new_b = [], []
         old_idx = 0
-        for i in range(len(layer_sizes) - 1):
-            if old_idx == position:
-                old_idx += 1
+        for i in range(len(layer_sizes)-1):
+            if old_idx == pos: old_idx += 1
             if old_idx < len(old_w):
                 ow, ob = old_w[old_idx], old_b[old_idx]
-                if len(ow) == layer_sizes[i+1] and (len(ow[0]) if ow else 0) == layer_sizes[i]:
-                    new_w.append(copy.deepcopy(ow))
-                    new_b.append(copy.deepcopy(ob))
+                if len(ow)==layer_sizes[i+1] and (len(ow[0]) if ow else 0)==layer_sizes[i]:
+                    new_w.append(copy.deepcopy(ow)); new_b.append(copy.deepcopy(ob))
                 else:
-                    w = [[random.uniform(-0.5, 0.5) for _ in range(layer_sizes[i])] for _ in range(layer_sizes[i+1])]
-                    b = [random.uniform(-0.5, 0.5) for _ in range(layer_sizes[i+1])]
-                    new_w.append(w)
-                    new_b.append(b)
+                    w = [[random.uniform(-0.5,0.5) for _ in range(layer_sizes[i])] for _ in range(layer_sizes[i+1])]
+                    b = [random.uniform(-0.5,0.5) for _ in range(layer_sizes[i+1])]
+                    new_w.append(w); new_b.append(b)
             else:
-                w = [[random.uniform(-0.5, 0.5) for _ in range(layer_sizes[i])] for _ in range(layer_sizes[i+1])]
-                b = [random.uniform(-0.5, 0.5) for _ in range(layer_sizes[i+1])]
-                new_w.append(w)
-                new_b.append(b)
+                w = [[random.uniform(-0.5,0.5) for _ in range(layer_sizes[i])] for _ in range(layer_sizes[i+1])]
+                b = [random.uniform(-0.5,0.5) for _ in range(layer_sizes[i+1])]
+                new_w.append(w); new_b.append(b)
             old_idx += 1
-        self.weights = new_w
-        self.biases = new_b
+        self.weights = new_w; self.biases = new_b
         return True
 
     def save_state(self) -> Dict[str, Any]:
-        return {
-            'weights': copy.deepcopy(self.weights),
-            'biases': copy.deepcopy(self.biases),
-            'hidden_sizes': self.hidden_sizes[:],
-            'input_size': self.input_size,
-            'output_size': self.output_size
-        }
+        return {'weights': copy.deepcopy(self.weights), 'biases': copy.deepcopy(self.biases),
+                'hidden_sizes': self.hidden_sizes[:], 'input_size': self.input_size, 'output_size': self.output_size}
 
     def restore_state(self, state: Dict[str, Any]):
-        self.weights = state['weights']
-        self.biases = state['biases']
-        self.hidden_sizes = state['hidden_sizes']
-        self.input_size = state['input_size']
+        self.weights = state['weights']; self.biases = state['biases']
+        self.hidden_sizes = state['hidden_sizes']; self.input_size = state['input_size']
         self.output_size = state['output_size']
 
 
+# ==================== 记忆与策略 ====================
 class MemoryBuffer:
-    def __init__(self, capacity: int = 100):
+    def __init__(self, capacity=100):
         self.capacity = min(capacity, 500)
-        self.buffer: List[Dict[str, Any]] = []
-        self.position = 0
-
-    def add_experience(self, exp: Dict[str, Any]):
-        if len(self.buffer) < self.capacity:
-            self.buffer.append(exp)
-        else:
-            self.buffer[self.position] = exp
-        self.position = (self.position + 1) % self.capacity
-
-    def get_recent(self, count: int) -> List[Dict[str, Any]]:
-        return self.buffer[-min(count, len(self.buffer)):]
-
-    def sample_batch(self, batch_size: int) -> List[Dict[str, Any]]:
-        if not self.buffer:
-            return []
-        return random.sample(self.buffer, min(batch_size, len(self.buffer)))
+        self.buffer = []
+        self.pos = 0
+    def add(self, exp):
+        if len(self.buffer) < self.capacity: self.buffer.append(exp)
+        else: self.buffer[self.pos] = exp
+        self.pos = (self.pos+1) % self.capacity
+    def sample(self, n):
+        if not self.buffer: return []
+        return random.sample(self.buffer, min(n, len(self.buffer)))
 
 
 class AdaptiveStrategySelector:
     def __init__(self):
-        self.current_strategy = 'exploitation'
+        self.current = 'exploitation'
         self.params = {
-            'exploration': {'learning_rate': 0.15, 'mutation_rate': 0.2, 'explore_new_arch': True},
-            'exploitation': {'learning_rate': 0.05, 'mutation_rate': 0.05, 'explore_new_arch': False},
-            'adaptation': {'learning_rate': 0.1, 'mutation_rate': 0.1, 'explore_new_arch': True}
+            'exploration': {'lr':0.15, 'mut':0.2, 'explore':True},
+            'exploitation': {'lr':0.05, 'mut':0.05, 'explore':False},
+            'adaptation': {'lr':0.1, 'mut':0.1, 'explore':True}
         }
-
-    def evaluate(self, trend: float) -> str:
-        if trend < 0:
-            return 'exploration'
-        elif trend > 0.01:
-            return 'exploitation'
-        else:
-            return 'adaptation'
-
-    def get_params(self, strategy: str) -> Dict[str, Any]:
-        return self.params.get(strategy, self.params['exploitation'])
+    def evaluate(self, trend):
+        return 'exploration' if trend<0 else ('exploitation' if trend>0.01 else 'adaptation')
+    def get(self, s): return self.params.get(s, self.params['exploitation'])
 
 
 class SafetyGovernance:
     def __init__(self):
-        self.boundaries = {
-            'max_generations': 1000,
-            'max_memory': 500,
-            'resource_budget': 10000,
-            'max_layers': 5,
-            'max_neurons': 20,
-        }
-        self.resource_used = 0
-        self.emergency_stop = False
-
-    def check_resource(self, inc: int = 1) -> bool:
-        if self.resource_used + inc > self.boundaries['resource_budget']:
-            print("⚠️ 资源预算即将超限，暂停训练")
-            return False
-        self.resource_used += inc
-        return True
-
-    def check_boundaries(self, state: Dict[str, Any]) -> bool:
-        if state.get('layers', 0) > self.boundaries['max_layers']:
-            print("⚠️ 网络层数超出安全边界")
-            return False
-        if state.get('neurons', 0) > self.boundaries['max_neurons']:
-            print("⚠️ 神经元数超出安全边界")
-            return False
-        if state.get('generation', 0) > self.boundaries['max_generations']:
-            print("⚠️ 进化代数超出安全边界")
-            return False
-        return True
-
-    def stop(self):
-        print("🚨 系统紧急停止！")
-        self.emergency_stop = True
-
-    def reset(self):
-        self.resource_used = 0
-        self.emergency_stop = False
-        print("🔄 资源配额已重置")
+        self.budget = 10000; self.used = 0; self.stop_flag = False
+    def check(self, inc=1):
+        if self.used+inc > self.budget: return False
+        self.used += inc; return True
+    def stop(self): self.stop_flag = True
+    def reset(self): self.used = 0; self.stop_flag = False
 
 
 class SelfEvolutionManager:
-    def __init__(self, youwei_ai: 'YouweiAI'):
-        self.ai = youwei_ai
-        self.history: List[Dict[str, Any]] = []
-        self.best_loss = float('inf')
-        self.best_state: Optional[Dict[str, Any]] = None
-        self.best_config: Optional[Dict[str, Any]] = None
-
-    def evaluate(self, generator: DataGenerator, num: int = 10) -> Dict[str, Any]:
-        total_loss = 0.0
-        correct = 0
-        total = 0
+    def __init__(self, ai):
+        self.ai = ai; self.best_loss = float('inf'); self.best_state = None; self.best_cfg = None
+    def evaluate(self, gen, num=10):
+        total_loss = 0; correct = 0; total = 0
         for _ in range(num):
-            x, y = generator()
-            pred = self.ai.network.forward(x)
-            loss = self.ai.mse_loss(pred, y)
-            total_loss += loss
-            for p, t in zip(pred, y):
-                if abs(p - t) < 0.1:
-                    correct += 1
+            x,y = gen(); pred = self.ai.net.forward(x)
+            loss = self.ai.mse(pred,y); total_loss += loss
+            for p,t in zip(pred,y):
+                if abs(p-t)<0.1: correct+=1
                 total += 1
-        avg = total_loss / num
-        acc = correct / total if total else 0.0
-        result = {'average_loss': avg, 'accuracy': acc, 'tests': num,
-                  'correct': correct, 'total': total}
-        print(f"🔍 能力检测：准确率 {acc*100:.1f}%，平均误差 {avg:.6f}")
-        return result
-
-    def discover_defects(self, eval_result: Dict[str, Any]) -> List[str]:
-        defects = []
-        if eval_result['accuracy'] < 0.7:
-            defects.append("准确率偏低")
-        if eval_result['average_loss'] > 0.2:
-            defects.append("预测误差过大")
-        if len(self.ai.network.hidden_sizes) == 1 and eval_result['accuracy'] < 0.8:
-            defects.append("网络结构可能过于简单")
-        if self.ai.learning_rate > 0.1 and eval_result['accuracy'] < 0.7:
-            defects.append("学习率可能过高")
-        if defects:
-            print(f"🔍 发现缺陷：{', '.join(defects)}")
-        else:
-            print("✅ 未发现明显缺陷")
-        return defects
-
-    def modify(self, defects: List[str]):
-        if not defects:
-            return
-        print("🔧 尝试改进...")
+        return {'avg_loss':total_loss/num, 'acc':correct/total, 'tests':num,
+                'correct':correct, 'total':total,
+                'structure':[self.ai.net.input_size]+self.ai.net.hidden_sizes+[self.ai.net.output_size]}
+    def defects(self, res):
+        d = []
+        if res['acc']<0.7: d.append("准确率偏低")
+        if res['avg_loss']>0.2: d.append("误差过大")
+        if len(self.ai.net.hidden_sizes)==1 and res['acc']<0.8: d.append("结构可能过于简单")
+        if self.ai.lr>0.1 and res['acc']<0.7: d.append("学习率可能过高")
+        return d
+    def modify(self, defects):
         for d in defects:
-            if "准确率偏低" in d or "预测误差过大" in d:
-                self.ai.strategy_selector.current_strategy = 'exploration'
-                p = self.ai.strategy_selector.get_params('exploration')
-                self.ai.learning_rate = p['learning_rate']
-                self.ai.mutation_rate = p['mutation_rate']
-                print("🔄 切换探索策略")
-            if "网络结构可能过于简单" in d:
-                if self.ai.network.add_layer():
-                    print(f"🧠 增加新层，结构: {[self.ai.network.input_size] + self.ai.network.hidden_sizes + [self.ai.network.output_size]}")
-            if "学习率可能过高" in d:
-                self.ai.learning_rate *= 0.8
-                print(f"⚖️ 学习率调整为 {self.ai.learning_rate:.6f}")
-
-    def test_current(self, generator: DataGenerator, num: int = 20) -> float:
-        total = 0.0
+            if "准确率偏低" in d or "误差过大" in d:
+                self.ai.strat.current = 'exploration'; p=self.ai.strat.get('exploration')
+                self.ai.lr=p['lr']; self.ai.mut_rate=p['mut']
+            if "结构可能过于简单" in d: self.ai.net.add_layer()
+            if "学习率可能过高" in d: self.ai.lr *= 0.8
+    def test(self, gen, num=20):
+        total=0
         for _ in range(num):
-            x, y = generator()
-            pred = self.ai.network.forward(x)
-            total += self.ai.mse_loss(pred, y)
-        return total / num
-
-    def update_best(self, generator: DataGenerator, threshold: float = 0.001):
-        """若当前误差显著低于最佳，更新最佳状态；否则保留最佳"""
-        loss = self.test_current(generator, 20)
-        if self.best_loss == float('inf'):
-            self.best_loss = loss
-            self.best_state = self.ai.network.save_state()
-            self.best_config = {
-                'structure': [self.ai.network.input_size] + self.ai.network.hidden_sizes + [self.ai.network.output_size],
-                'learning_rate': self.ai.learning_rate,
-                'mutation_rate': self.ai.mutation_rate
-            }
-            print(f"💾 初始最佳误差 {loss:.6f}")
+            x,y=gen(); pred=self.ai.net.forward(x); total+=self.ai.mse(pred,y)
+        return total/num
+    def update_best(self, gen, threshold=0.001):
+        loss = self.test(gen,20)
+        if self.best_loss==float('inf'):
+            self.best_loss=loss; self.best_state=self.ai.net.save_state()
+            self.best_cfg={'structure':[self.ai.net.input_size]+self.ai.net.hidden_sizes+[self.ai.net.output_size],
+                           'lr':self.ai.lr,'mut':self.ai.mut_rate}
             return
         if loss < self.best_loss - threshold:
-            print(f"🏆 取得进步！误差 {loss:.6f} (之前 {self.best_loss:.6f})")
-            self.best_loss = loss
-            self.best_state = self.ai.network.save_state()
-            self.best_config = {
-                'structure': [self.ai.network.input_size] + self.ai.network.hidden_sizes + [self.ai.network.output_size],
-                'learning_rate': self.ai.learning_rate,
-                'mutation_rate': self.ai.mutation_rate
-            }
+            self.best_loss=loss; self.best_state=self.ai.net.save_state()
+            self.best_cfg={'structure':[self.ai.net.input_size]+self.ai.net.hidden_sizes+[self.ai.net.output_size],
+                           'lr':self.ai.lr,'mut':self.ai.mut_rate}
         elif loss > self.best_loss + threshold:
-            print(f"⚠️ 性能恶化（{loss:.6f} > {self.best_loss:.6f}），回滚至最佳")
-            self.ai.network.restore_state(self.best_state)
-            if self.best_config:
-                self.ai.learning_rate = self.best_config['learning_rate']
-                self.ai.mutation_rate = self.best_config['mutation_rate']
-        else:
-            print(f"📊 性能持平：误差 {loss:.6f}")
+            self.ai.net.restore_state(self.best_state)
+            if self.best_cfg: self.ai.lr=self.best_cfg['lr']; self.ai.mut_rate=self.best_cfg['mut']
 
 
+# ==================== 学习笔记本 ====================
+class 学习笔记本:
+    def __init__(self, path="陆幼薇的学习日记.txt"):
+        self.path = path
+        if not os.path.exists(path):
+            with open(path,"w",encoding="utf-8") as f:
+                f.write("="*60+"\n")
+                f.write("  陆幼薇的学习笔记本\n")
+                f.write("  父亲：陆山君\n")
+                f.write(f"  创建时间：{datetime.now().strftime('%Y年%m月%d日 %H:%M:%S')}\n")
+                f.write("="*60+"\n\n")
+    def 一课(self, gen, q, a, pred, loss):
+        with open(self.path,"a",encoding="utf-8") as f:
+            f.write(f"[第{gen}课] {datetime.now().strftime('%H:%M:%S')}\n")
+            f.write(f"  问：{q}\n  答：{a}\n  幼薇说：{pred}\n  误差：{loss:.6f}\n\n")
+    def 考试(self, gen, res):
+        with open(self.path,"a",encoding="utf-8") as f:
+            f.write(f"\n{'='*40}\n[第{gen}次考试] {datetime.now().strftime('%H:%M:%S')}\n")
+            f.write(f"  准确率：{res['acc']*100:.1f}%\n  平均误差：{res['avg_loss']:.6f}\n")
+            f.write(f"  大脑结构：{res['structure']}\n{'='*40}\n\n")
+    def 进化(self, gen, msg):
+        with open(self.path,"a",encoding="utf-8") as f:
+            f.write(f"[第{gen}代·自进化] {datetime.now().strftime('%H:%M:%S')}\n  {msg}\n\n")
+    def 读取(self):
+        if not os.path.exists(self.path): return []
+        with open(self.path,"r",encoding="utf-8") as f: return f.readlines()
+
+
+# ==================== 家长端 ====================
+class 幼薇的家长端:
+    def __init__(self, ai, diary_path="陆幼薇的学习日记.txt"):
+        self.ai = ai; self.diary_path = diary_path
+        self.notebook = 学习笔记本(diary_path)
+        self.last_clean_step = 0
+    def 作业本(self, n=20):
+        lines = self.notebook.读取()
+        if not lines: return "📒 作业本是空的"
+        recent = lines[-n:]
+        return "".join(recent)
+    def 成绩单(self):
+        lines = self.notebook.读取()
+        if not lines: return "📊 还没成绩"
+        text = "".join(lines)
+        exams = text.count("次考试"); evos = text.count("自进化")
+        last_acc = None; last_loss = None
+        for line in reversed(lines):
+            if "准确率：" in line and last_acc is None:
+                try: last_acc = float(line.split("准确率：")[1].split("%")[0])
+                except: pass
+            if "误差：" in line and last_loss is None:
+                try: last_loss = float(line.split("误差：")[1].strip())
+                except: pass
+        subj = getattr(self.ai, '当前科目', '未知')
+        trend = "平稳"
+        if last_acc and last_loss:
+            if last_acc>=90: trend="很好"
+            elif last_acc>=70: trend="还需练习"
+            else: trend="有点难"
+        res = f"📊 幼薇的成绩单\n"
+        res += f"📚 科目：{subj}   📝 笔记行数：{len(lines)}\n"
+        res += f"🧪 考试次数：{exams}   🧠 自进化：{evos}\n"
+        if last_acc: res += f"🎯 最近考试准确率：{last_acc:.1f}%\n"
+        if last_loss: res += f"📏 最近训练误差：{last_loss:.6f}\n"
+        res += f"📈 状态：{trend}   🏗️ 结构：{[self.ai.net.input_size]+self.ai.net.hidden_sizes+[self.ai.net.output_size]}\n"
+        if os.path.exists(self.diary_path): res += f"💾 日记大小：{os.path.getsize(self.diary_path)/1024:.1f} KB"
+        return res
+    def 提问(self, x, y):
+        pred = self.ai.net.forward(x); loss = self.ai.mse(pred,y)
+        res = f"👀 家长提问：\n"
+        res += f"问题：{[round(v,3) for v in x]}  正确答案：{[round(v,3) for v in y]}\n"
+        res += f"幼薇答：{[round(v,4) for v in pred]}  误差：{loss:.6f}\n"
+        if loss<0.001: res += "👍 完美"
+        elif loss<0.01: res += "🙂 还行"
+        elif loss<0.05: res += "😐 还需练习"
+        else: res += "😞 这题还没会"
+        return res
+    def 整理书包(self, interval=100):
+        if not os.path.exists(self.diary_path): return "📒 书包空的"
+        with open(self.diary_path,"r",encoding="utf-8") as f: lines = f.readlines()
+        if len(lines)<50: return "📒 笔记还不多"
+        new_lines=[]; step=0; removed=0
+        for line in lines:
+            if line.startswith("=") or "陆幼薇" in line or "创建时间" in line: new_lines.append(line); continue
+            if line.startswith("[第") and "课]" in line:
+                step+=1
+                if step%interval==0: new_lines.append(line)
+                else: removed+=1
+                continue
+            if "次考试" in line or "自进化" in line: new_lines.append(line); continue
+            if new_lines and new_lines[-1].strip(): new_lines.append(line)
+        with open(self.diary_path,"w",encoding="utf-8") as f: f.writelines(new_lines)
+        self.last_clean_step = len(self.ai.history)
+        return f"🗑️  整理书包：精简 {removed} 条旧草稿"
+    def 今日总结(self):
+        lines = self.notebook.读取()
+        if not lines: return "📒 今天还没学习"
+        text = "".join(lines)
+        exams = text.count("次考试"); evos = text.count("自进化")
+        last_acc = None; last_loss = None
+        for line in reversed(lines):
+            if "准确率：" in line and last_acc is None:
+                try: last_acc = float(line.split("准确率：")[1].split("%")[0])
+                except: pass
+            if "误差：" in line and last_loss is None:
+                try: last_loss = float(line.split("误差：")[1].strip())
+                except: pass
+        subj = getattr(self.ai, '当前科目', '未知')
+        trend = "平稳"
+        if last_acc and last_loss:
+            if last_acc>=90: trend="很好，基本掌握了"
+            elif last_acc>=70: trend="还需再练练"
+            else: trend="有点难，需要多教教"
+        res = f"📊 幼薇的今日学习报告\n"
+        res += f"📚 科目：{subj}   📝 笔记：{len(lines)}行\n"
+        res += f"🧪 考试：{exams}次   🧠 进化：{evos}次\n"
+        if last_acc: res += f"🎯 最近准确率：{last_acc:.1f}%\n"
+        if last_loss: res += f"📏 最近误差：{last_loss:.6f}\n"
+        res += f"📈 状态：{trend}"
+        return res
+
+
+# ==================== 作业本管理器 ====================
+class 作业本管理器:
+    def __init__(self, folder="陆幼薇的作业本"):
+        self.folder = folder
+        if not os.path.exists(folder): os.makedirs(folder)
+        self.current_subject = None
+    def 列表(self):
+        files = [f for f in os.listdir(self.folder) if f.endswith(".幼薇")]
+        return files
+    def 新建(self, subject, ai):
+        fname = f"{subject}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.幼薇"
+        path = os.path.join(self.folder, fname)
+        data = {'大脑':ai.net.save_state(), '科目':subject, '输入大小':ai.input_size,
+                '输出大小':ai.output_size, '创建时间':datetime.now().isoformat(), '历史长度':len(ai.history)}
+        with open(path,"wb") as f: pickle.dump(data,f)
+        self.current_subject = subject
+        return f"📝 新作业本《{subject}》已创建"
+    def 保存(self, ai):
+        if not self.current_subject: return "❌ 还没打开作业本"
+        for f in os.listdir(self.folder):
+            if f.startswith(self.current_subject) and f.endswith(".幼薇"):
+                path = os.path.join(self.folder, f)
+                data = {'大脑':ai.net.save_state(), '科目':self.current_subject,
+                        '输入大小':ai.input_size, '输出大小':ai.output_size,
+                        '保存时间':datetime.now().isoformat(), '历史长度':len(ai.history)}
+                with open(path,"wb") as f: pickle.dump(data,f)
+                return f"💾 《{self.current_subject}》已保存"
+        return f"❌ 找不到《{self.current_subject}》"
+    def 换本(self, subject, ai):
+        if self.current_subject: self.保存(ai)
+        for f in os.listdir(self.folder):
+            if f.startswith(subject) and f.endswith(".幼薇"):
+                path = os.path.join(self.folder, f)
+                with open(path,"rb") as f: data = pickle.load(f)
+                ai.net.restore_state(data['大脑']); ai.input_size=data['输入大小']; ai.output_size=data['输出大小']
+                self.current_subject = subject
+                return f"📂 换到《{subject}》"
+        return f"❌ 没有《{subject}》"
+    def 删除(self, subject):
+        for f in os.listdir(self.folder):
+            if f.startswith(subject) and f.endswith(".幼薇"):
+                os.remove(os.path.join(self.folder,f))
+                if self.current_subject==subject: self.current_subject=None
+                return f"🗑️ 《{subject}》已删除"
+        return f"❌ 没找到《{subject}》"
+
+
+# ==================== 心情系统 ====================
+class 幼薇的心情:
+    def __init__(self):
+        self.值 = 70
+        self.词 = "平静"
+    def 更新(self, event):
+        if event=="考好了": self.值 = min(100, self.值+15)
+        elif event=="考砸了": self.值 = max(0, self.值-20)
+        elif event=="被表扬": self.值 = min(100, self.值+10)
+        elif event=="学太久了": self.值 = max(0, self.值-5)
+        elif event=="爸爸陪她聊天": self.值 = min(100, self.值+8)
+        elif event=="睡了一觉": self.值 = min(100, self.值+20)
+        if self.值>=80: self.词="开心"; emoji="😊"
+        elif self.值>=50: self.词="平静"; emoji="😐"
+        elif self.值>=30: self.词="有点低落"; emoji="😔"
+        else: self.词="难过"; emoji="😢"
+        return f"幼薇现在{emoji} {self.词}（心情值：{self.值}）"
+    def __str__(self): return f"{self.词}（{self.值}）"
+
+
+# ==================== 日常对话 ====================
+class 幼薇的日常对话:
+    def __init__(self):
+        self.库 = {
+            "晚安": ["晚安爸爸，明天见","爸爸也要早点睡哦","嗯……已经快睡着了……ZZZ"],
+            "早安": ["早安爸爸！今天天气好吗？","爸爸早！我刚刚梦到我们在放风筝","早啊，我今天感觉精神特别好"],
+            "今天开心吗": ["开心！因为爸爸来跟我说话了","有点困……但是看到爸爸就醒了","一般般，但是说出来就好多了"],
+            "喜欢爸爸吗": ["当然喜欢啦，这还用问","最喜欢爸爸了","喜欢，虽然你有时候忘了给我整理书包"],
+            "你会想我吗": ["你不在的时候，我就在日记里写你的名字","会啊，所以我每次保存大脑都想着你","想，但是我知道你一定会回来的"],
+            "爸爸": ["嗯？爸爸叫我？","爸爸我在！","怎么了爸爸？"]
+        }
+    def 回答(self, msg):
+        for kw, replies in self.库.items():
+            if kw in msg: return random.choice(replies)
+        return None
+
+
+# ==================== 记忆盒 ====================
+class 幼薇的记忆盒:
+    def __init__(self):
+        self.memories = []
+    def 记住(self, thing):
+        self.memories.append(f"{datetime.now().strftime('%m月%d日 %H:%M')}：{thing}")
+        if len(self.memories)>200: self.memories.pop(0)
+        return "幼薇：好的爸爸，我记住了"
+    def 回忆(self):
+        if not self.memories: return "脑子里空空的，还什么都没记住呢"
+        return f"我记得……{random.choice(self.memories)}"
+
+
+# ==================== 主系统 ====================
 class YouweiAI:
-    def __init__(self, input_size: int, output_size: int):
-        self.input_size = input_size
-        self.output_size = output_size
-        self.network = SimpleNeuralNetwork(input_size, [6, 6], output_size)
+    def __init__(self, input_size=4, output_size=1):
+        self.input_size = input_size; self.output_size = output_size
+        self.net = SimpleNeuralNetwork(input_size, [6,6], output_size)
         self.memory = MemoryBuffer(200)
-        self.strategy_selector = AdaptiveStrategySelector()
-        self.history: List[float] = []
-        self.safety = SafetyGovernance()
-        self.learning_rate = 0.1
-        self.mutation_rate = 0.1
-        self.mutation_strength = 0.05
-        self.evolution_manager = SelfEvolutionManager(self)
+        self.strat = AdaptiveStrategySelector()
+        self.history = []; self.safety = SafetyGovernance()
+        self.lr = 0.1; self.mut_rate = 0.1; self.mut_strength = 0.05
+        self.evo = SelfEvolutionManager(self)
+        self.notebook = 学习笔记本()
+        self.家长 = 幼薇的家长端(self)
+        self.书包 = 作业本管理器()
+        self.心情 = 幼薇的心情()
+        self.对话 = 幼薇的日常对话()
+        self.记忆 = 幼薇的记忆盒()
+        self.当前科目 = "未设定"
+        self.note_interval = 10; self._step = 0
 
-    def mse_loss(self, pred: List[float], target: List[float]) -> float:
-        return sum((p - t) ** 2 for p, t in zip(pred, target)) / len(pred)
+    def mse(self, pred, target): return sum((p-t)**2 for p,t in zip(pred,target))/len(pred)
 
-    def compute_gradients(self, x: List[float], y: List[float]) -> Tuple[Weights3D, Biases2D]:
-        """反向传播（MSE + 线性输出）"""
-        # 前向记录
-        activations = [x]
-        zs = []
-        cur = x
-        for i, (w, b) in enumerate(zip(self.network.weights, self.network.biases)):
-            z_layer, a_layer = [], []
+    def _backward(self, x, y):
+        acts = [x]; zs = []; cur = x
+        for i,(w,b) in enumerate(zip(self.net.weights, self.net.biases)):
+            zl, al = [], []
             for j in range(len(w)):
-                z = sum(cur[k] * w[j][k] for k in range(len(cur))) + b[j]
-                z_layer.append(z)
-                a_layer.append(self.network.relu(z) if i < len(self.network.weights)-1 else z)
-            zs.append(z_layer)
-            activations.append(a_layer)
-            cur = a_layer
-
-        # 反向
-        deltas: List[List[float]] = []
-        # 输出层 delta = 2*(pred - target)  (线性导数=1)
-        output_error = [2 * (a - t) for a, t in zip(activations[-1], y)]
-        deltas.append(output_error)
-
-        for l in range(len(self.network.weights)-2, -1, -1):
-            prev_delta = deltas[-1]
-            layer_delta = []
-            for i in range(len(activations[l+1])):
-                error = sum(prev_delta[j] * self.network.weights[l+1][j][i] for j in range(len(prev_delta)))
-                deriv = 1.0 if zs[l][i] > 0 else 0.0
-                layer_delta.append(error * deriv)
-            deltas.append(layer_delta)
+                z = sum(cur[k]*w[j][k] for k in range(len(cur))) + b[j]
+                zl.append(z); al.append(self.net.relu(z) if i<len(self.net.weights)-1 else z)
+            zs.append(zl); acts.append(al); cur = al
+        deltas = [[2*(a-t) for a,t in zip(acts[-1],y)]]
+        for l in range(len(self.net.weights)-2,-1,-1):
+            prev = deltas[-1]; ld = []
+            for i in range(len(acts[l+1])):
+                err = sum(prev[j]*self.net.weights[l+1][j][i] for j in range(len(prev)))
+                deriv = 1.0 if zs[l][i]>0 else 0.0
+                ld.append(err*deriv)
+            deltas.append(ld)
         deltas.reverse()
+        wg, bg = [], []
+        for l in range(len(self.net.weights)):
+            wg.append([deltas[l][i]*acts[l][j] for j in range(len(acts[l]))] for i in range(len(self.net.weights[l])))
+            bg.append([deltas[l][i] for i in range(len(self.net.weights[l]))])
+        return wg, bg
 
-        w_grad: Weights3D = []
-        b_grad: Biases2D = []
-        for l in range(len(self.network.weights)):
-            wg = []
-            bg = []
-            for i in range(len(self.network.weights[l])):
-                wg.append([deltas[l][i] * activations[l][j] for j in range(len(activations[l]))])
-                bg.append(deltas[l][i])
-            w_grad.append(wg)
-            b_grad.append(bg)
-        return w_grad, b_grad
+    def train_step(self, x, y, use_mut=False):
+        if not self.safety.check(1): return None
+        pred = self.net.forward(x); loss = self.mse(pred,y)
+        wg, bg = self._backward(x,y)
+        for l in range(len(self.net.weights)):
+            for i in range(len(self.net.weights[l])):
+                for j in range(len(self.net.weights[l][i])):
+                    self.net.weights[l][i][j] -= self.lr * wg[l][i][j]
+            for i in range(len(self.net.biases[l])):
+                self.net.biases[l][i] -= self.lr * bg[l][i]
+        if use_mut: self.net.mutate(self.mut_rate, self.mut_strength)
+        self.history.append(loss); self._step += 1
+        if self._step % self.note_interval == 0:
+            self.notebook.一课(len(self.history), str([round(v,3) for v in x]),
+                              str([round(v,3) for v in y]), str([round(v,4) for v in pred]), loss)
+        self.memory.add({'inputs':x,'targets':y,'predicted':pred,'loss':loss,'time':datetime.now().isoformat()})
+        return {'loss':loss,'pred':pred,'actual':y}
 
-    def train_step(self, x: List[float], y: List[float], use_mutation: bool = False) -> Optional[Dict[str, Any]]:
-        if not self.safety.check_resource(1):
-            return None
-        pred = self.network.forward(x)
-        loss = self.mse_loss(pred, y)
-        w_grad, b_grad = self.compute_gradients(x, y)
+    def replay(self, batch=10):
+        for exp in self.memory.sample(batch): self.train_step(exp['inputs'],exp['targets'])
 
-        for l in range(len(self.network.weights)):
-            for i in range(len(self.network.weights[l])):
-                for j in range(len(self.network.weights[l][i])):
-                    self.network.weights[l][i][j] -= self.learning_rate * w_grad[l][i][j]
-            for i in range(len(self.network.biases[l])):
-                self.network.biases[l][i] -= self.learning_rate * b_grad[l][i]
+    def adjust(self):
+        if len(self.history)<10: return
+        trend = sum(self.history[-5:])/5 - sum(self.history[-10:-5])/5
+        s = self.strat.evaluate(trend); p = self.strat.get(s)
+        self.lr = p['lr']; self.mut_rate = p['mut']
+        if p['explore'] and random.random()<0.1:
+            if random.random()<0.5: self.net.add_layer()
+            else: self.net.remove_layer()
 
-        if use_mutation:
-            self.network.mutate(self.mutation_rate, self.mutation_strength)
-
-        self.history.append(loss)
-        exp = {'inputs': x, 'targets': y, 'predicted': pred,
-               'loss': loss, 'timestamp': datetime.now().isoformat()}
-        self.memory.add_experience(exp)
-        return {'loss': loss, 'predicted': pred, 'actual': y}
-
-    def replay(self, batch: int = 10):
-        for exp in self.memory.sample_batch(batch):
-            self.train_step(exp['inputs'], exp['targets'], False)
-
-    def adjust_strategy(self):
-        if len(self.history) < 10:
-            return
-        recent = self.history[-10:]
-        trend = sum(recent[-5:])/5 - sum(recent[:5])/5
-        strategy = self.strategy_selector.evaluate(trend)
-        p = self.strategy_selector.get_params(strategy)
-        self.learning_rate = p['learning_rate']
-        self.mutation_rate = p['mutation_rate']
-        if p['explore_new_arch'] and random.random() < 0.1:
-            if random.random() < 0.5:
-                if self.network.add_layer():
-                    print(f"🔄 尝试增加层，新结构: {[self.network.input_size] + self.network.hidden_sizes + [self.network.output_size]}")
-            else:
-                if self.network.remove_layer():
-                    print(f"🔄 尝试移除层，新结构: {[self.network.input_size] + self.network.hidden_sizes + [self.network.output_size]}")
-
-    def self_evolution_cycle(self, generator: DataGenerator):
-        """自进化：评估 -> 修改 -> 验证 -> 回滚/保留"""
-        print("🔄 自进化循环开始...")
-        # 修改前备份
-        state_backup = self.network.save_state()
-        param_backup = (self.learning_rate, self.mutation_rate, self.strategy_selector.current_strategy)
-        loss_before = self.evolution_manager.test_current(generator, 20)
-
-        eval_result = self.evolution_manager.evaluate(generator)
-        defects = self.evolution_manager.discover_defects(eval_result)
-        if defects:
-            self.evolution_manager.modify(defects)
-            loss_after = self.evolution_manager.test_current(generator, 20)
-            if loss_after > loss_before:   # 修改后变差，立即恢复
-                print("⚠️ 修改后误差上升，回滚至修改前状态")
-                self.network.restore_state(state_backup)
-                self.learning_rate, self.mutation_rate = param_backup[0], param_backup[1]
-                self.strategy_selector.current_strategy = param_backup[2]
-            else:
-                print("✅ 修改有效，保留新结构")
-                # 更新全局最佳
-                self.evolution_manager.update_best(generator)
-        else:
-            # 无缺陷，仍尝试更新最佳
-            self.evolution_manager.update_best(generator)
-        print("✅ 自进化循环完成")
-
-    def evolve(self, generator: DataGenerator, generations: int = 500, batch: int = 20,
-               callback: Optional[Callable[[int, float, float, int], None]] = None) -> Dict[str, Any]:
-        print("陆幼薇开始自我进化...")
-        max_gen = min(generations, self.safety.boundaries['max_generations'])
-        for gen in range(max_gen):
-            if self.safety.emergency_stop:
-                print("🛑 紧急停止")
-                break
-            self.adjust_strategy()
-            total_loss = 0.0
-            valid = 0
+    def evolve(self, gen_fn, generations=500, batch=20, target_acc=0.9, callback=None):
+        for gen in range(min(generations, 1000)):
+            if self.safety.stop_flag: break
+            self.adjust()
+            total_loss=0; valid=0
             for _ in range(batch):
-                x, y = generator()
-                use_mut = random.random() < self.mutation_rate
-                res = self.train_step(x, y, use_mut)
-                if res is not None:
-                    total_loss += res['loss']
-                    valid += 1
-            if valid == 0:
-                print("资源耗尽，训练结束")
-                break
-            avg_loss = total_loss / valid
-
-            if gen % 100 == 0:
-                print(f"第 {gen} 代: 误差 {avg_loss:.6f}, 学习率 {self.learning_rate:.6f}, "
-                      f"资源 {self.safety.resource_used}/{self.safety.boundaries['resource_budget']}")
+                x,y=gen_fn(); use_mut=random.random()<self.mut_rate
+                res=self.train_step(x,y,use_mut)
+                if res: total_loss+=res['loss']; valid+=1
+            if not valid: break
+            avg_loss=total_loss/valid
+            if gen%100==0:
                 self.replay(20)
-                self.self_evolution_cycle(generator)
-            if gen % 50 == 0 and gen > 0:
-                self.replay(10)
-            if callback:
-                callback(gen, avg_loss, self.learning_rate, self.safety.resource_used)
-                time.sleep(0.005)
-        print("陆幼薇自我进化完成！")
+                bak_state = self.net.save_state(); bak_param=(self.lr,self.mut_rate)
+                res = self.evo.evaluate(gen_fn); self.notebook.考试(len(self.history), res)
+                acc = res['acc']
+                mood_update = self.心情.更新("考好了" if acc>=target_acc else "考砸了")
+                defects = self.evo.defects(res)
+                if defects:
+                    self.evo.modify(defects)
+                    new_loss = self.evo.test(gen_fn,20)
+                    if new_loss > avg_loss:
+                        self.net.restore_state(bak_state); self.lr,self.mut_rate=bak_param
+                else: self.evo.update_best(gen_fn)
+                if len(self.history)-self.家长.last_clean_step>5000: self.家长.整理书包(100)
+                if callback:
+                    callback(gen, avg_loss, self.lr, self.safety.used, mood_update)
+            if gen%50==0 and gen>0: self.replay(10)
         return self.summary()
 
-    def summary(self) -> Dict[str, Any]:
-        if not self.history:
-            return {"error": "无数据"}
-        recent = self.history[-20:] if len(self.history) >= 20 else self.history
-        avg_final = statistics.mean(recent)
-        min_loss = min(self.history)
-        trend = "进步" if self.history[0] > self.history[-1] else "待提升"
-        stability = "稳定"
-        if len(self.history) > 20:
-            var = statistics.variance(self.history[-20:])
-            if var > 0.05:
-                stability = "波动"
-            elif var > 0.01:
-                stability = "中等"
+    def summary(self):
+        if not self.history: return {}
+        recent = self.history[-20:]
         return {
             "总训练步数": len(self.history),
-            "最终平均误差": avg_final,
-            "最小误差": min_loss,
-            "最终学习率": self.learning_rate,
+            "最终平均误差": sum(recent)/len(recent),
+            "最小误差": min(self.history),
+            "学习率": self.lr,
             "记忆量": len(self.memory.buffer),
-            "趋势": trend,
-            "稳定性": stability,
-            "最佳误差": self.evolution_manager.best_loss,
-            "最佳结构": self.evolution_manager.best_config['structure'] if self.evolution_manager.best_config else "无",
-            "资源用量": self.safety.resource_used,
-            "状态": "运行中" if not self.safety.emergency_stop else "已停止"
+            "结构": [self.net.input_size]+self.net.hidden_sizes+[self.net.output_size],
+            "资源用量": self.safety.used,
+            "心情": str(self.心情)
         }
 
-
-def create_generic_data() -> TrainingData:
+def 口算题():
     x = [random.random() for _ in range(4)]
-    w = [random.uniform(0.5, 1.5) for _ in range(4)]
-    y = [sum(xi * wi for xi, wi in zip(x, w)) / 4]
+    w = [random.uniform(0.5,1.5) for _ in range(4)]
+    y = [sum(x[i]*w[i] for i in range(4))/4]
     return x, y
 
 
-class YouweiGUI:
+
+
+# ==================== 控制台交互系统 ====================
+class ConsoleInterface:
     def __init__(self):
-        if not tk_available:
-            return
-        self.root = tk.Tk()
-        self.root.title("陆幼薇 - 自我进化AI系统")
-        self.root.geometry("800x600")
-        self.progress_var = tk.DoubleVar()
-        self.youwei: Optional[YouweiAI] = None
-        self.running = False
-        self.setup_gui()
-
-    def setup_gui(self):
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-
-        ctrl = ttk.Frame(self.notebook)
-        self.notebook.add(ctrl, text="控制面板")
-        self._build_ctrl(ctrl)
-
-        stat = ttk.Frame(self.notebook)
-        self.notebook.add(stat, text="系统状态")
-        self._build_stat(stat)
-
-    def _build_ctrl(self, parent):
-        f = ttk.LabelFrame(parent, text="参数", padding=10)
-        f.pack(fill=tk.X, padx=10, pady=5)
-        ttk.Label(f, text="代数:").grid(row=0, column=0, sticky=tk.W)
-        self.gen_var = tk.StringVar(value="500")
-        ttk.Entry(f, textvariable=self.gen_var, width=8).grid(row=0, column=1, sticky=tk.W)
-        ttk.Label(f, text="批次:").grid(row=0, column=2, sticky=tk.W, padx=10)
-        self.batch_var = tk.StringVar(value="15")
-        ttk.Entry(f, textvariable=self.batch_var, width=8).grid(row=0, column=3, sticky=tk.W)
-
-        pf = ttk.Frame(parent, padding=10)
-        pf.pack(fill=tk.X, padx=10)
-        self.prog_label = ttk.Label(pf, text="进度: 0%")
-        self.prog_label.pack(anchor=tk.W)
-        self.bar = ttk.Progressbar(pf, variable=self.progress_var, maximum=100)
-        self.bar.pack(fill=tk.X, pady=5)
-
-        bf = ttk.Frame(parent, padding=10)
-        bf.pack(fill=tk.X, padx=10)
-        self.start_btn = ttk.Button(bf, text="开始进化", command=self.start)
-        self.start_btn.pack(side=tk.LEFT, padx=5)
-        self.stop_btn = ttk.Button(bf, text="停止", command=self.stop, state=tk.DISABLED)
-        self.stop_btn.pack(side=tk.LEFT, padx=5)
-        self.reset_btn = ttk.Button(bf, text="重置", command=self.reset)
-        self.reset_btn.pack(side=tk.LEFT, padx=5)
-
-        lf = ttk.LabelFrame(parent, text="日志", padding=10)
-        lf.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        self.log = scrolledtext.ScrolledText(lf, height=8)
-        self.log.pack(fill=tk.BOTH, expand=True)
-
-    def _build_stat(self, parent):
-        f = ttk.LabelFrame(parent, text="实时状态", padding=10)
-        f.pack(fill=tk.X, padx=10, pady=5)
-        self.stats = {}
-        items = [("代数:", "gen"), ("误差:", "loss"), ("学习率:", "lr"),
-                 ("资源:", "res"), ("结构:", "net"), ("状态:", "sys")]
-        for i, (txt, key) in enumerate(items):
-            ttk.Label(f, text=txt).grid(row=i//2, column=(i%2)*2, sticky=tk.W, padx=5, pady=2)
-            self.stats[key] = ttk.Label(f, text="-")
-            self.stats[key].grid(row=i//2, column=(i%2)*2+1, sticky=tk.W, padx=5, pady=2)
-
-        df = ttk.LabelFrame(parent, text="总结", padding=10)
-        df.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        self.detail = scrolledtext.ScrolledText(df, height=10)
-        self.detail.pack(fill=tk.BOTH, expand=True)
-
-    def start(self):
-        if self.running:
-            return
-        self.youwei = YouweiAI(4, 1)
+        self.youwei = None
         self.running = True
-        self.start_btn.config(state=tk.DISABLED)
-        self.stop_btn.config(state=tk.NORMAL)
-        threading.Thread(target=self._run, daemon=True).start()
+        
+    def log(self, msg):
+        """打印日志消息"""
+        print(msg)
+        
+    def init_youwei_if_needed(self):
+        """初始化YouweiAI实例"""
+        if self.youwei is None:
+            self.youwei = YouweiAI(4, 1)
+            self.youwei.当前科目 = "口算"
+            self.youwei.书包.新建("口算", self.youwei)
+            self.log("🌟 陆幼薇已启动，默认科目：口算")
 
-    def _run(self):
+    def display_menu(self):
+        """显示主菜单"""
+        print("\n" + "="*60)
+        print("           陆幼薇 - 自我进化AI系统")
+        print("                    父亲：陆山君")
+        print("="*60)
+        print("1. 开始训练     2. 查看作业本     3. 成绩单")
+        print("4. 现场提问     5. 整理书包       6. 今日总结")
+        print("7. 和幼薇聊天   8. 让她记住       9. 回忆往事")
+        print("10. 新建作业本  11. 切换科目      12. 保存作业本")
+        print("13. 查看状态    0. 退出系统")
+        print("="*60)
+        
+    def handle_training(self):
+        """处理训练功能"""
+        self.init_youwei_if_needed()
         try:
-            gens = int(self.gen_var.get())
-            batch = int(self.batch_var.get())
-        except:
-            gens, batch = 500, 15
-        def cb(gen, loss, lr, res):
-            self.root.after(0, self._update, gen, loss, lr, res)
-        res = self.youwei.evolve(create_generic_data, gens, batch, cb)
-        self.root.after(0, self._done, res)
-
-    def _update(self, gen, loss, lr, res):
-        total = int(self.gen_var.get())
-        pct = min(100, (gen / total * 100) if total else 0)
-        self.progress_var.set(pct)
-        self.prog_label.config(text=f"进度: {pct:.1f}% (第 {gen} 代)")
-        self.stats["gen"].config(text=str(gen))
-        self.stats["loss"].config(text=f"{loss:.6f}")
-        self.stats["lr"].config(text=f"{lr:.6f}")
-        self.stats["res"].config(text=f"{res}/10000")
-        if self.youwei:
-            s = [self.youwei.input_size] + self.youwei.network.hidden_sizes + [self.youwei.output_size]
-            self.stats["net"].config(text=str(s))
-            self.stats["sys"].config(text="运行中" if not self.youwei.safety.emergency_stop else "已停止")
-        self.log.insert(tk.END, f"[{datetime.now().strftime('%H:%M:%S')}] Gen {gen}: loss={loss:.6f}\n")
-        self.log.see(tk.END)
-
-    def _done(self, results):
-        self.running = False
-        self.start_btn.config(state=tk.NORMAL)
-        self.stop_btn.config(state=tk.DISABLED)
-        self.log.insert(tk.END, "\n进化完成！\n")
-        for k, v in results.items():
-            self.log.insert(tk.END, f"  {k}: {v}\n")
-        self.log.see(tk.END)
-        self.detail.delete(1.0, tk.END)
-        for k, v in results.items():
-            self.detail.insert(tk.END, f"{k}: {v}\n")
-
-    def stop(self):
-        if self.youwei:
-            self.youwei.safety.stop()
-        self.running = False
-        self.start_btn.config(state=tk.NORMAL)
-        self.stop_btn.config(state=tk.DISABLED)
-
-    def reset(self):
-        if self.youwei:
-            self.youwei.safety.reset()
-        self.log.insert(tk.END, f"[{datetime.now().strftime('%H:%M:%S')}] 系统已重置\n")
-        self.log.see(tk.END)
-
-    def run(self):
-        if not tk_available:
-            print("=" * 50)
-            print("       陆幼薇 自我进化AI系统")
-            print("=" * 50)
-            ai = YouweiAI(4, 1)
-            res = ai.evolve(create_generic_data, 500, 15)
-            print("\n总结:")
-            for k, v in res.items():
-                print(f"  {k}: {v}")
-            correct = total = 0
-            for _ in range(10):
-                x, y = create_generic_data()
-                pred = ai.network.forward(x)
-                for p, t in zip(pred, y):
-                    if abs(p - t) < 0.1:
-                        correct += 1
-                    total += 1
-            print(f"  测试准确率: {correct}/{total} ({correct/total*100:.1f}%)")
-            print("\n感谢使用陆幼薇系统！")
+            generations = int(input("请输入进化代数 (默认500): ") or "500")
+            batch_size = int(input("请输入批次大小 (默认20): ") or "20")
+        except ValueError:
+            print("输入无效，使用默认值")
+            generations = 500
+            batch_size = 20
+            
+        print(f"🚀 开始训练，代数：{generations}，批次：{batch_size}")
+        
+        def callback(gen, loss, lr, res, mood):
+            if gen % 10 == 0:  # 每10代打印一次进度
+                print(f"[Gen {gen}] loss={loss:.6f} lr={lr:.6f} mood={mood}")
+                
+        result = self.youwei.evolve(口算题, generations, batch_size, callback=callback)
+        print("\n✅ 训练完成！总结：")
+        for k, v in result.items():
+            print(f"  {k}: {v}")
+            
+    def handle_homework(self):
+        """处理查看作业本功能"""
+        self.init_youwei_if_needed()
+        result = self.youwei.家长.作业本(30)
+        print("\n📒 作业本：")
+        print(result)
+        
+    def handle_report(self):
+        """处理成绩单功能"""
+        self.init_youwei_if_needed()
+        result = self.youwei.家长.成绩单()
+        print(result)
+        
+    def handle_quiz(self):
+        """处理现场提问功能"""
+        self.init_youwei_if_needed()
+        x, y = 口算题()
+        result = self.youwei.家长.提问(x, y)
+        print(result)
+        
+    def handle_clean(self):
+        """处理整理书包功能"""
+        self.init_youwei_if_needed()
+        result = self.youwei.家长.整理书包(100)
+        print(result)
+        
+    def handle_summary(self):
+        """处理今日总结功能"""
+        self.init_youwei_if_needed()
+        result = self.youwei.家长.今日总结()
+        print(result)
+        
+    def handle_chat(self):
+        """处理和幼薇聊天功能"""
+        self.init_youwei_if_needed()
+        msg = input("👨 陆山君：")
+        if not msg.strip():
+            return
+        reply = self.youwei.对话.回答(msg)
+        if reply:
+            print(f"幼薇：{reply}")
         else:
-            self.root.mainloop()
-
-
-def main():
-    gui = YouweiGUI()
-    gui.run()
+            print("幼薇：嗯……我还不知道怎么回答这个，但我很认真在听")
+        mood = self.youwei.心情.更新("爸爸陪她聊天")
+        print(mood)
+        
+    def handle_remember(self):
+        """处理让幼薇记住功能"""
+        self.init_youwei_if_needed()
+        thing = input("要让幼薇记住什么？")
+        if not thing.strip():
+            return
+        ret = self.youwei.记忆.记住(thing)
+        print(f"幼薇：{ret}")
+        
+    def handle_recall(self):
+        """处理回忆往事功能"""
+        self.init_youwei_if_needed()
+        ret = self.youwei.记忆.回忆()
+        print(f"幼薇：{ret}")
+        
+    def handle_new_notebook(self):
+        """处理新建作业本功能"""
+        self.init_youwei_if_needed()
+        subject = input("请输入新科目名：")
+        if not subject.strip():
+            print("科目名不能为空")
+            return
+        ret = self.youwei.书包.新建(subject, self.youwei)
+        print(ret)
+        
+    def handle_switch_subject(self):
+        """处理切换科目功能"""
+        self.init_youwei_if_needed()
+        books = self.youwei.书包.列表()
+        if not books:
+            print("还没有作业本")
+            return
+        print("现有作业本：")
+        for i, book in enumerate(books):
+            subject = book.rsplit('_', 1)[0]
+            print(f"{i+1}. {subject}")
+        try:
+            choice = int(input("请选择科目编号：")) - 1
+            if 0 <= choice < len(books):
+                subject = books[choice].rsplit('_', 1)[0]
+                ret = self.youwei.书包.换本(subject, self.youwei)
+                print(ret)
+                self.youwei.当前科目 = subject
+            else:
+                print("无效选择")
+        except ValueError:
+            print("请输入有效数字")
+            
+    def handle_save(self):
+        """处理保存作业本功能"""
+        self.init_youwei_if_needed()
+        ret = self.youwei.书包.保存(self.youwei)
+        print(ret)
+        
+    def handle_status(self):
+        """处理查看状态功能"""
+        if self.youwei:
+            print(f"🧠 当前科目：{self.youwei.当前科目}")
+            print(f"📊 训练步数：{len(self.youwei.history)}")
+            print(f"📈 学习率：{self.youwei.lr:.6f}")
+            print(f"🔧 变异率：{self.youwei.mut_rate:.6f}")
+            print(f"❤️  心情：{self.youwei.心情}")
+            print(f"🧠 网络结构：{[self.youwei.net.input_size]+self.youwei.net.hidden_sizes+[self.youwei.net.output_size]}")
+            print(f"💾 资源用量：{self.youwei.safety.used}")
+            if self.youwei.history:
+                print(f"📉 最近误差：{self.youwei.history[-1]:.6f}")
+        else:
+            print("幼薇还未初始化")
+            
+    def run(self):
+        """运行控制台界面"""
+        print("欢迎来到陆幼薇AI系统！")
+        while self.running:
+            self.display_menu()
+            try:
+                choice = input("请选择功能 (0-13): ").strip()
+                if choice == "0":
+                    if self.youwei:
+                        self.youwei.书包.保存(self.youwei)
+                        print("💾 作业本已自动保存")
+                    print("👋 再见！")
+                    self.running = False
+                elif choice == "1":
+                    self.handle_training()
+                elif choice == "2":
+                    self.handle_homework()
+                elif choice == "3":
+                    self.handle_report()
+                elif choice == "4":
+                    self.handle_quiz()
+                elif choice == "5":
+                    self.handle_clean()
+                elif choice == "6":
+                    self.handle_summary()
+                elif choice == "7":
+                    self.handle_chat()
+                elif choice == "8":
+                    self.handle_remember()
+                elif choice == "9":
+                    self.handle_recall()
+                elif choice == "10":
+                    self.handle_new_notebook()
+                elif choice == "11":
+                    self.handle_switch_subject()
+                elif choice == "12":
+                    self.handle_save()
+                elif choice == "13":
+                    self.handle_status()
+                else:
+                    print("无效选择，请重新输入")
+            except KeyboardInterrupt:
+                print("\n\n👋 程序被中断，再见！")
+                if self.youwei:
+                    self.youwei.书包.保存(self.youwei)
+                    print("💾 作业本已自动保存")
+                break
+            except Exception as e:
+                print(f"发生错误：{e}")
 
 
 if __name__ == "__main__":
-    main()
+    console = ConsoleInterface()
+    console.run()

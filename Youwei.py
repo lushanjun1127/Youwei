@@ -669,14 +669,14 @@ class YouweiAI:
             best_idx = self.performance_history.index(min(self.performance_history))
         
         return {
-            "总练习次数": len(self.performance_history),
+            "总训练次数": len(self.performance_history),
             "最终平均错误": statistics.mean(self.performance_history[-20:]) if len(self.performance_history) >= 20 else statistics.mean(self.performance_history),
             "最小错误": min(self.performance_history) if self.performance_history else float('inf'),
             "最终学习劲头": self.learning_rate,
             "记忆使用量": len(self.memory_buffer.buffer),
             "近期学习趋势": "明显进步" if trend == "进步" and len(self.performance_history) > 100 and self.performance_history[-1] < self.performance_history[-50] else ("明显退步" if trend != "进步" else trend),
             "学习稳定性": stability,
-            "最佳表现": f"第 {best_idx} 次练习时达到" if best_idx > 0 else "仍在努力中",
+            "最佳表现": f"第 {best_idx} 次训练时达到" if best_idx > 0 else "仍在努力中",
             "最终策略": self.strategy_selector.current_strategy,
             "最终网络结构": [self.network.input_size] + self.network.hidden_sizes + [self.network.output_size],
             "最佳历史性能": self.self_evolution_manager.best_performance,
@@ -792,112 +792,44 @@ def main():
     
     print("→ Youwei学习准备完成！")
     
-    print("\n→ 开始小学课程学习...")
-    print("  Youwei将从最基础的数学和语文开始学习")
-    print("  数学：5以内的加减法（适合一年级）")
-    print("  语文：简单汉字识别和计数")
-    print("  每次练习后，Youwei都会总结经验并改进自己")
+    print("\n→ 开始自我进化...")
+    print("  Youwei将通过通用数据进行自我训练")
+    print("  每次训练后，Youwei都会总结经验并改进自己")
     print("  🔒 系统将持续监控资源使用情况，确保安全运行")
     print("  🔄 Youwei将根据学习情况动态调整策略和网络结构")
     print("  🔄 Youwei将执行完整的自进化循环（评价→发现缺陷→改进→测试→保留优版本）")
     
-    # 定义数据生成器
+    # 定义通用数据生成器
     def data_generator():
-        return create_mixed_primary_data()
+        return create_generic_data()
     
-    # 运行学习过程
+    # 运行进化过程
     results = youwei.evolve(data_generator, num_generations=500, train_size=15)
     
-    print("\nYouwei小学课程学习总结:")
+    print("\nYouwei自我进化总结:")
     for key, value in results.items():
         print(f"  {key}: {value}")
     
-    print("\nYouwei小学课程测试:")
-    print("→ 让我们来检验Youwei的学习成果...")
+    print("\nYouwei自我进化测试:")
+    print("→ 测试Youwei的学习成果...")
     
-    print("  数学题测试：")
-    print("  加法练习（3以内的数字）：")
-    correct_add = 0
-    total_add = 0
-    for i in range(5):
-        a = random.randint(1, 3)
-        b = random.randint(1, 3)
-        inputs = [float(a)/3.0, float(b)/3.0, 0.0, 0.0]
-        expected_output = float(a + b)
-        actual_output = youwei.network.forward(inputs)[0] * 6  # 反归一化输出
-        actual_result = round(actual_output)
-        print(f"    {a} + {b} = ?")
-        print(f"      正确答案: {expected_output}")
-        print(f"      Youwei计算: {actual_result}")
-        if abs(expected_output - actual_result) <= 0.5:  # 更宽松的判断
-            print(f"      结果: ✓")
-            correct_add += 1
-        else:
-            print(f"      结果: ✗")
-        total_add += 1
-    
-    print(f"  加法准确率: {correct_add}/{total_add} ({correct_add/total_add*100:.1f}%)")
-    
-    print("  减法练习（3以内的数字）：")
-    correct_sub = 0
-    total_sub = 0
-    for i in range(3):
-        a = random.randint(2, 3)
-        b = random.randint(1, a)
-        inputs = [float(a)/3.0, float(b)/3.0, 0.0, 0.0]
-        expected_output = float(a - b)
-        actual_output = youwei.network.forward(inputs)[0] * 3  # 反归一化输出
-        actual_result = round(actual_output)
-        print(f"    {a} - {b} = ?")
-        print(f"      正确答案: {expected_output}")
-        print(f"      Youwei计算: {actual_result}")
-        if abs(expected_output - actual_result) <= 0.5:  # 更宽松的判断
-            print(f"      结果: ✓")
-            correct_sub += 1
-        else:
-            print(f"      结果: ✗")
-        total_sub += 1
-    
-    print(f"  减法准确率: {correct_sub}/{total_sub} ({correct_sub/total_sub*100:.1f}%)")
-    
-    print("  语文题测试：")
-    correct_count = 0
-    total_count = 0
-    for i in range(3):
-        words = ["一", "二", "三", "花", "草", "树"]
-        sentence_len = random.randint(1, 3)
-        sentence = "".join(random.choices(words, k=sentence_len))
+    test_correct = 0
+    test_total = 0
+    for i in range(10):
+        inputs, targets = create_generic_data()
+        predicted = youwei.network.forward(inputs)
         
-        # 使用与训练时相同的特征工程
-        char_codes = [ord(c) for c in sentence]
-        mean_code = sum(char_codes) / len(char_codes) / 10000.0
-        
-        if len(char_codes) > 1:
-            variance = sum((c - sum(char_codes)/len(char_codes))**2 for c in char_codes) / len(char_codes)
-            std_code = (variance ** 0.5) / 10000.0
-        else:
-            std_code = 0.0
-        
-        inputs = [mean_code, std_code, float(sentence_len) / 10.0, 0.0]
-        actual_output = youwei.network.forward(inputs)[0] * 10  # 反归一化输出（统一使用/10.0）
-        estimated_len = round(actual_output)
-        print(f"    句子: '{sentence}' (共{sentence_len}个字)")
-        print(f"      Youwei估算: {estimated_len}个字")
-        if abs(sentence_len - estimated_len) <= 0.5:  # 更宽松的判断
-            print(f"      结果: ✓")
-            correct_count += 1
-        else:
-            print(f"      结果: ✗")
-        total_count += 1
+        for p, t in zip(predicted, targets):
+            if abs(p - t) < 0.1:  # 容忍度为0.1
+                test_correct += 1
+            test_total += 1
     
-    print(f"  识字计数准确率: {correct_count}/{total_count} ({correct_count/total_count*100:.1f}%)")
+    accuracy = test_correct / test_total if test_total > 0 else 0
+    print(f"  测试准确率: {test_correct}/{test_total} ({accuracy*100:.1f}%)")
     
-    overall_accuracy = (correct_add + correct_sub + correct_count) / (total_add + total_sub + total_count)
-    print(f"\n  综合成绩: {overall_accuracy*100:.1f}%")
-    
-    if overall_accuracy >= 0.8:
-        print("\n  🎉 恭喜Youwei！小学课程学习优秀！")
-    elif overall_accuracy >= 0.6:
+    if accuracy >= 0.8:
+        print("\n  🎉 恭喜Youwei！进化效果优秀！")
+    elif accuracy >= 0.6:
         print("\n  👍 Youwei表现不错，继续努力！")
     else:
         print("\n  💪 Youwei需要更多练习，加油！")

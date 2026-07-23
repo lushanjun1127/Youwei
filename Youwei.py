@@ -240,6 +240,140 @@ class SafetyGovernance:
         print("🔄 Youwei（陆幼薇）系统已重置资源配额")
 
 
+class SelfEvolutionManager:
+    """自进化管理器 - 实现完整的自进化循环"""
+    def __init__(self, youwei_ai):
+        self.youwei_ai = youwei_ai
+        self.evolution_history = []
+        self.best_performance = float('inf')  # 最佳性能（最低损失）
+        self.best_config = None  # 最佳配置
+    
+    def evaluate_results(self, test_data_generator: Callable, num_tests: int = 10) -> Dict[str, Any]:
+        """评价Youwei的表现"""
+        total_loss = 0
+        correct_predictions = 0
+        total_predictions = 0
+        
+        for _ in range(num_tests):
+            inputs, targets = test_data_generator()
+            predicted = self.youwei_ai.network.forward(inputs)
+            
+            # 计算损失
+            loss = self.youwei_ai.mse_loss(predicted, targets)
+            total_loss += loss
+            
+            # 计算准确预测数
+            for p, t in zip(predicted, targets):
+                if abs(p - t) < 0.1:  # 容忍度为0.1
+                    correct_predictions += 1
+                total_predictions += 1
+        
+        avg_loss = total_loss / num_tests
+        accuracy = correct_predictions / total_predictions if total_predictions > 0 else 0
+        
+        evaluation_result = {
+            'average_loss': avg_loss,
+            'accuracy': accuracy,
+            'total_tests': num_tests,
+            'correct_predictions': correct_predictions,
+            'total_predictions': total_predictions
+        }
+        
+        print(f"🔍 Youwei（陆幼薇）能力检测：准确率 {accuracy*100:.1f}%，平均错误 {avg_loss:.6f}")
+        return evaluation_result
+    
+    def discover_defects(self, evaluation_result: Dict[str, Any]) -> List[str]:
+        """发现Youwei的缺陷"""
+        defects = []
+        
+        if evaluation_result['accuracy'] < 0.7:  # 准确率低于70%
+            defects.append("整体准确率偏低")
+        if evaluation_result['average_loss'] > 0.2:  # 损失过高
+            defects.append("预测误差过大")
+        if len(self.youwei_ai.network.hidden_sizes) == 1 and evaluation_result['accuracy'] < 0.8:
+            defects.append("网络结构可能过于简单")
+        if self.youwei_ai.learning_rate > 0.1 and evaluation_result['accuracy'] < 0.7:
+            defects.append("学习率可能过高导致不稳定")
+        
+        if defects:
+            print(f"🔍 Youwei（陆幼薇）发现缺陷：{', '.join(defects)}")
+        else:
+            print("✅ Youwei（陆幼薇）未发现明显缺陷")
+        
+        return defects
+    
+    def modify_strategy(self, defects: List[str]):
+        """根据发现的缺陷修改策略"""
+        if not defects:
+            return  # 没有缺陷则不修改
+        
+        print("🔧 Youwei（陆幼薇）正在尝试新方法...")
+        
+        for defect in defects:
+            if "准确率偏低" in defect or "预测误差过大" in defect:
+                # 增加探索，尝试不同的学习策略
+                self.youwei_ai.strategy_selector.current_strategy = 'exploration'
+                strategy_params = self.youwei_ai.strategy_selector.get_strategy_params('exploration')
+                self.youwei_ai.learning_rate = strategy_params['learning_rate']
+                self.youwei_ai.mutation_rate = strategy_params['mutation_rate']
+                print("🔄 Youwei（陆幼薇）正在尝试新节奏...")
+            
+            if "网络结构可能过于简单" in defect:
+                # 尝试增加网络复杂度
+                success = self.youwei_ai.network.add_layer()
+                if success:
+                    print(f"🧠 Youwei（陆幼薇）大脑多了一个小房间，当前结构: {[self.youwei_ai.network.input_size] + self.youwei_ai.network.hidden_sizes + [self.youwei_ai.network.output_size]}")
+            
+            if "学习率可能过高" in defect:
+                # 降低学习率
+                self.youwei_ai.learning_rate *= 0.8
+                print(f"⚖️ Youwei（陆幼薇）调整了学习劲头，当前值: {self.youwei_ai.learning_rate:.6f}")
+    
+    def test_new_version(self, test_data_generator: Callable) -> float:
+        """测试新版本的性能"""
+        # 临时保存当前状态
+        temp_network_state = {
+            'weights': [w[:] for w in self.youwei_ai.network.weights],
+            'biases': [b[:] for b in self.youwei_ai.network.biases],
+            'hidden_sizes': self.youwei_ai.network.hidden_sizes[:]
+        }
+        
+        # 测试性能
+        evaluation = self.evaluate_results(test_data_generator, num_tests=20)
+        new_performance = evaluation['average_loss']
+        
+        # 恢复状态（因为我们只是测试）
+        self.youwei_ai.network.weights = temp_network_state['weights']
+        self.youwei_ai.network.biases = temp_network_state['biases']
+        self.youwei_ai.network.hidden_sizes = temp_network_state['hidden_sizes']
+        
+        return new_performance
+    
+    def retain_better_version(self, test_data_generator: Callable, threshold_improvement: float = 0.05):
+        """保留更优版本"""
+        current_evaluation = self.evaluate_results(test_data_generator, num_tests=20)
+        current_performance = current_evaluation['average_loss']
+        
+        # 如果当前性能比历史最佳好一定阈值，则保留为最佳
+        if current_performance < self.best_performance - threshold_improvement:
+            print(f"🏆 Youwei（陆幼薇）取得进步！当前错误: {current_performance:.6f}，历史最佳: {self.best_performance:.6f}")
+            self.best_performance = current_performance
+            # 保存当前配置为最佳
+            self.best_config = {
+                'network_structure': [self.youwei_ai.network.input_size] + self.youwei_ai.network.hidden_sizes + [self.youwei_ai.network.output_size],
+                'learning_rate': self.youwei_ai.learning_rate,
+                'mutation_rate': self.youwei_ai.mutation_rate
+            }
+            print(f"💾 Youwei（陆幼薇）保存了当前优秀配置: {self.best_config}")
+        elif current_performance < self.best_performance:
+            # 性能有所改善但未超过阈值
+            self.best_performance = current_performance
+            print(f"📈 Youwei（陆幼薇）正在进步！当前错误: {current_performance:.6f}")
+        else:
+            # 性能没有改善，考虑恢复到最佳配置
+            print(f"📊 Youwei（陆幼薇）当前错误: {current_performance:.6f}，历史最佳: {self.best_performance:.6f}")
+
+
 class YouweiAI:
     def __init__(self, input_size: int, output_size: int):
         self.input_size = input_size
@@ -260,6 +394,9 @@ class YouweiAI:
         self.learning_rate = 0.1
         self.mutation_rate = 0.1
         self.mutation_strength = 0.05
+        
+        # 添加自进化管理器
+        self.self_evolution_manager = SelfEvolutionManager(self)
 
     def mse_loss(self, predicted: List[float], target: List[float]) -> float:
         if len(predicted) != len(target):
@@ -284,7 +421,7 @@ class YouweiAI:
                     for k in range(len(activations[-1]))
                 ) + bias_vector[j]
                 
-                z.append(weight_sum)
+                z.append(weighted_sum)
                 
                 if i < len(self.network.weights) - 1:
                     activation = self.network.relu(weighted_sum)
@@ -437,6 +574,28 @@ class YouweiAI:
                 if success:
                     print(f"🔄 Youwei（陆幼薇）正在尝试移除神经网络层，当前结构: {[self.network.input_size] + self.network.hidden_sizes + [self.network.output_size]}")
 
+    def self_evolution_cycle(self, data_generator: Callable):
+        """执行一个完整的自进化循环"""
+        print("🔄 Youwei（陆幼薇）开始自进化循环...")
+        
+        # 1. 任务输入（由data_generator提供）
+        # 2. 模型执行（在evolve方法中已完成）
+        
+        # 3. 结果评价
+        evaluation_result = self.self_evolution_manager.evaluate_results(data_generator)
+        
+        # 4. 发现缺陷
+        defects = self.self_evolution_manager.discover_defects(evaluation_result)
+        
+        # 5. 修改自身策略/参数
+        self.self_evolution_manager.modify_strategy(defects)
+        
+        # 6. 测试新版本（在retain_better_version中完成）
+        # 7. 保留更优版本
+        self.self_evolution_manager.retain_better_version(data_generator)
+        
+        print("✅ Youwei（陆幼薇）自进化循环完成！")
+
     def evolve(self, data_generator: Callable, num_generations: int = 500, train_size: int = 20):
         print("Youwei（陆幼薇）开始小学基础学习...")
         print("🔒 系统安全边界已设定，资源使用开始监控...")
@@ -465,12 +624,14 @@ class YouweiAI:
             
             avg_loss = total_loss / train_size
             
-            # 每100代进行一次经验回放
+            # 每100代进行一次经验回放和自进化循环
             if generation % 100 == 0:
                 print(f"第 {generation} 次课堂: 平均错误 = {avg_loss:.6f}, "
                       f"学习劲头 = {self.learning_rate:.6f}, "
                       f"资源使用率 = {self.safety_governance.current_resource_usage}/{self.safety_governance.fixed_boundaries['resource_budget']}")
                 self.replay_experience(20)  # 回放经验
+                # 执行自进化循环
+                self.self_evolution_cycle(data_generator)
             
             # 每50代进行一次经验回放
             if generation % 50 == 0 and generation > 0:
@@ -518,6 +679,8 @@ class YouweiAI:
             "最佳表现": f"第 {best_idx} 次练习时达到" if best_idx > 0 else "仍在努力中",
             "最终策略": self.strategy_selector.current_strategy,
             "最终网络结构": [self.network.input_size] + self.network.hidden_sizes + [self.network.output_size],
+            "最佳历史性能": self.self_evolution_manager.best_performance,
+            "最佳配置": self.self_evolution_manager.best_config,
             "资源使用量": self.safety_governance.current_resource_usage,
             "系统状态": "正常运行" if not self.safety_governance.is_emergency_stop else "已紧急停止"
         }
@@ -606,7 +769,7 @@ def display_youwei_welcome():
     print("• 动态架构调整（受安全边界约束）")
     print("• 记忆与经验积累（支持经验回放）")
     print("• 自主策略选择（根据性能调整参数）")
-    print("• 持续自我优化（在安全范围内）")
+    print("• 完整自进化循环（评价→发现缺陷→改进→测试→保留优版本）")
     print("🔒 系统已启用安全治理机制")
     print("=" * 60)
 
@@ -622,6 +785,7 @@ def main():
     print("→ 设置记忆库（用于存储学习经验，容量受限）")
     print("→ 初始化学习参数")
     print("→ 启动安全治理机制（资源监控、紧急停止等）")
+    print("→ 初始化自进化管理器（评价、缺陷发现、改进、版本选择）")
     
     # 创建Youwei实例
     youwei = YouweiAI(input_size=4, output_size=1)
@@ -635,6 +799,7 @@ def main():
     print("  每次练习后，Youwei都会总结经验并改进自己")
     print("  🔒 系统将持续监控资源使用情况，确保安全运行")
     print("  🔄 Youwei将根据学习情况动态调整策略和网络结构")
+    print("  🔄 Youwei将执行完整的自进化循环（评价→发现缺陷→改进→测试→保留优版本）")
     
     # 定义数据生成器
     def data_generator():
@@ -740,6 +905,7 @@ def main():
     print("\nYouwei（陆幼薇）小学课程学习完成! 系统已掌握基础数学和语文知识。")
     print("接下来可以继续学习更高级的知识！")
     print("🔒 安全治理机制将持续守护Youwei的成长之路！")
+    print("🔄 自进化循环将帮助Youwei持续改进自己！")
     print("感谢使用Youwei（陆幼薇）自我进化的AI系统!")
 
 

@@ -14,10 +14,12 @@ import sys
 import os
 import random
 import math
-import pickle
+import json
 import copy
 import threading
 import time
+import re
+import hashlib
 from typing import List, Dict, Any, Callable, Tuple, Optional
 from datetime import datetime
 import statistics
@@ -364,50 +366,136 @@ class 幼薇的家长端:
 
 
 # ==================== 作业本管理器 ====================
+
+def _is_safe_filename(filename: str) -> bool:
+    """验证文件名是否安全，防止路径遍历攻击"""
+    if not filename or len(filename) > 100:
+        return False
+    if '..' in filename or '/' in filename or '\\' in filename:
+        return False
+    if not re.match(r'^[a-zA-Z0-9_\u4e00-\u9fff\-\.]+$', filename):
+        return False
+    return True
+
+def _get_safe_path(folder: str, filename: str) -> Optional[str]:
+    """获取安全的文件路径，防止路径遍历"""
+    if not _is_safe_filename(filename):
+        return None
+    abs_folder = os.path.abspath(folder)
+    abs_path = os.path.abspath(os.path.join(folder, filename))
+    if not abs_path.startswith(abs_folder + os.sep) and abs_path != abs_folder:
+        return None
+    return abs_path
+
+def _compute_file_signature(data: Dict[str, Any]) -> str:
+    """计算数据签名，用于完整性验证"""
+    data_copy = {k: v for k, v in data.items() if k != '_signature'}
+    json_str = json.dumps(data_copy, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(json_str.encode('utf-8')).hexdigest()[:16]
+
+def _validate_file_signature(data: Dict[str, Any]) -> bool:
+    """验证文件签名"""
+    if '_signature' not in data:
+        return False
+    expected_sig = data['_signature']
+    actual_sig = _compute_file_signature(data)
+    return expected_sig == actual_sig
+
 class 作业本管理器:
     def __init__(self, folder="陆幼薇的作业本"):
         self.folder = folder
-        if not os.path.exists(folder): os.makedirs(folder)
+        if not os.path.exists(folder): 
+            os.makedirs(folder, exist_ok=True)
         self.current_subject = None
+        
     def 列表(self):
-        files = [f for f in os.listdir(self.folder) if f.endswith(".幼薇")]
-        return files
+        try:
+            files = [f for f in os.listdir(self.folder) if f.endswith(".幼薇") and _is_safe_filename(f)]
+            return files
+        except OSError:
+            return []
+            
     def 新建(self, subject, ai):
+        if not subject or not _is_safe_filename(subject + ".幼薇"):
+            return "❌ 科目名不安全"
         fname = f"{subject}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.幼薇"
-        path = os.path.join(self.folder, fname)
+        safe_path = _get_safe_path(self.folder, fname)
+        if not safe_path:
+            return "❌ 路径不安全"
         data = {'大脑':ai.net.save_state(), '科目':subject, '输入大小':ai.input_size,
                 '输出大小':ai.output_size, '创建时间':datetime.now().isoformat(), '历史长度':len(ai.history)}
-        with open(path,"wb") as f: pickle.dump(data,f)
-        self.current_subject = subject
-        return f"📝 新作业本《{subject}》已创建"
+        data['_signature'] = _compute_file_signature(data)
+        try:
+            with open(safe_path,"w",encoding="utf-8") as f: 
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            self.current_subject = subject
+            return f"📝 新作业本《{subject}》已创建"
+        except (IOError, OSError, TypeError, ValueError) as e:
+            return f"❌ 创建失败：{str(e)}"
+            
     def 保存(self, ai):
-        if not self.current_subject: return "❌ 还没打开作业本"
-        for f in os.listdir(self.folder):
-            if f.startswith(self.current_subject) and f.endswith(".幼薇"):
-                path = os.path.join(self.folder, f)
-                data = {'大脑':ai.net.save_state(), '科目':self.current_subject,
-                        '输入大小':ai.input_size, '输出大小':ai.output_size,
-                        '保存时间':datetime.now().isoformat(), '历史长度':len(ai.history)}
-                with open(path,"wb") as f: pickle.dump(data,f)
-                return f"💾 《{self.current_subject}》已保存"
-        return f"❌ 找不到《{self.current_subject}》"
+        if not self.current_subject: 
+            return "❌ 还没打开作业本"
+        try:
+            files = [f for f in os.listdir(self.folder) if f.startswith(self.current_subject) and f.endswith(".幼薇")]
+            for f in files:
+                if _is_safe_filename(f):
+                    path = _get_safe_path(self.folder, f)
+                    if path:
+                        data = {'大脑':ai.net.save_state(), '科目':self.current_subject,
+                                '输入大小':ai.input_size, '输出大小':ai.output_size,
+                                '保存时间':datetime.now().isoformat(), '历史长度':len(ai.history)}
+                        data['_signature'] = _compute_file_signature(data)
+                        with open(path,"w",encoding="utf-8") as f: 
+                            json.dump(data, f, ensure_ascii=False, indent=2)
+                        return f"💾 《{self.current_subject}》已保存"
+            return f"❌ 找不到《{self.current_subject}》"
+        except (IOError, OSError, TypeError, ValueError) as e:
+            return f"❌ 保存失败：{str(e)}"
+            
     def 换本(self, subject, ai):
-        if self.current_subject: self.保存(ai)
-        for f in os.listdir(self.folder):
-            if f.startswith(subject) and f.endswith(".幼薇"):
-                path = os.path.join(self.folder, f)
-                with open(path,"rb") as f: data = pickle.load(f)
-                ai.net.restore_state(data['大脑']); ai.input_size=data['输入大小']; ai.output_size=data['输出大小']
-                self.current_subject = subject
-                return f"📂 换到《{subject}》"
-        return f"❌ 没有《{subject}》"
+        if self.current_subject: 
+            self.保存(ai)
+        if not subject or not _is_safe_filename(subject):
+            return "❌ 科目名不安全"
+        try:
+            files = [f for f in os.listdir(self.folder) if f.startswith(subject) and f.endswith(".幼薇")]
+            for f in files:
+                if _is_safe_filename(f):
+                    path = _get_safe_path(self.folder, f)
+                    if path:
+                        try:
+                            with open(path,"r",encoding="utf-8") as f: 
+                                data = json.load(f)
+                            if not _validate_file_signature(data):
+                                continue
+                            ai.net.restore_state(data['大脑'])
+                            ai.input_size=data['输入大小']
+                            ai.output_size=data['输出大小']
+                            self.current_subject = subject
+                            return f"📂 换到《{subject}》"
+                        except (json.JSONDecodeError, KeyError, TypeError):
+                            continue
+            return f"❌ 没有《{subject}》"
+        except OSError:
+            return f"❌ 读取失败"
+            
     def 删除(self, subject):
-        for f in os.listdir(self.folder):
-            if f.startswith(subject) and f.endswith(".幼薇"):
-                os.remove(os.path.join(self.folder,f))
-                if self.current_subject==subject: self.current_subject=None
-                return f"🗑️ 《{subject}》已删除"
-        return f"❌ 没找到《{subject}》"
+        if not subject or not _is_safe_filename(subject):
+            return "❌ 科目名不安全"
+        try:
+            files = [f for f in os.listdir(self.folder) if f.startswith(subject) and f.endswith(".幼薇")]
+            for f in files:
+                if _is_safe_filename(f):
+                    path = _get_safe_path(self.folder, f)
+                    if path:
+                        os.remove(path)
+                        if self.current_subject==subject: 
+                            self.current_subject=None
+                        return f"🗑️ 《{subject}》已删除"
+            return f"❌ 没找到《{subject}》"
+        except OSError:
+            return f"❌ 删除失败"
 
 
 # ==================== 心情系统 ====================
@@ -622,8 +710,18 @@ class ConsoleInterface:
         """处理训练功能"""
         self.init_youwei_if_needed()
         try:
-            generations = int(input("请输入进化代数 (默认500): ") or "500")
-            batch_size = int(input("请输入批次大小 (默认20): ") or "20")
+            gen_input = input("请输入进化代数 (默认500): ").strip()
+            if gen_input and len(gen_input) <= 10 and gen_input.isdigit():
+                generations = int(gen_input)
+                generations = max(1, min(generations, 10000))
+            else:
+                generations = 500
+            batch_input = input("请输入批次大小 (默认20): ").strip()
+            if batch_input and len(batch_input) <= 5 and batch_input.isdigit():
+                batch_size = int(batch_input)
+                batch_size = max(1, min(batch_size, 1000))
+            else:
+                batch_size = 20
         except ValueError:
             print("输入无效，使用默认值")
             generations = 500
@@ -762,6 +860,10 @@ class ConsoleInterface:
             self.display_menu()
             try:
                 choice = input("请选择功能 (0-13): ").strip()
+                # 输入验证：只允许数字和空字符串，长度限制
+                if not choice or len(choice) > 2 or not choice.isdigit():
+                    print("无效选择，请输入 0-13 的数字")
+                    continue
                 if choice == "0":
                     if self.youwei:
                         self.youwei.书包.保存(self.youwei)

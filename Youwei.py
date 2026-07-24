@@ -1,5 +1,5 @@
 """
-陆幼薇 - 自我进化AI系统（PySide6 GUI版）
+陆幼薇 - 自我进化AI系统（控制台版）
 父亲：陆山君
 女儿：陆幼薇
 
@@ -7,7 +7,7 @@
 ✅ 神经网络（动态结构、自进化）
 ✅ 学习笔记本、家长端、作业本管理器
 ✅ 心情系统、日常对话、记忆盒
-✅ PySide6 图形界面，多线程训练
+✅ 控制台交互界面，安全输入验证
 """
 
 import sys
@@ -16,13 +16,25 @@ import random
 import math
 import json
 import copy
-import threading
 import time
 import re
 import hashlib
+import hmac
+import logging
 from typing import List, Dict, Any, Callable, Tuple, Optional
 from datetime import datetime
 import statistics
+
+# 配置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('youwei.log', encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # ==================== 神经网络 ====================
 Weights3D = List[List[List[float]]]
@@ -186,13 +198,32 @@ class AdaptiveStrategySelector:
 
 
 class SafetyGovernance:
-    def __init__(self):
-        self.budget = 10000; self.used = 0; self.stop_flag = False
+    """安全治理类，防止资源滥用和无限循环"""
+    def __init__(self, max_budget=10000, max_single_op=1000):
+        self.budget = max_budget
+        self.used = 0
+        self.stop_flag = False
+        self.max_single_op = max_single_op  # 单次操作最大资源消耗
+        
     def check(self, inc=1):
-        if self.used+inc > self.budget: return False
-        self.used += inc; return True
-    def stop(self): self.stop_flag = True
-    def reset(self): self.used = 0; self.stop_flag = False
+        """检查并记录资源使用，防止绕过"""
+        if inc > self.max_single_op:
+            logger.warning(f"单次操作资源请求过大：{inc}")
+            return False
+        if self.used + inc > self.budget:
+            logger.warning(f"资源预算超限：已用{self.used}, 请求{inc}")
+            return False
+        self.used += inc
+        return True
+    
+    def stop(self): 
+        self.stop_flag = True
+        logger.info("安全治理已停止")
+        
+    def reset(self): 
+        self.used = 0
+        self.stop_flag = False
+        logger.info("安全治理已重置")
 
 
 class SelfEvolutionManager:
@@ -371,35 +402,58 @@ def _is_safe_filename(filename: str) -> bool:
     """验证文件名是否安全，防止路径遍历攻击"""
     if not filename or len(filename) > 100:
         return False
+    # 严格检查：禁止任何路径分隔符和父目录引用
     if '..' in filename or '/' in filename or '\\' in filename:
         return False
+    # 只允许字母、数字、中文、下划线、连字符和点
     if not re.match(r'^[a-zA-Z0-9_\u4e00-\u9fff\-\.]+$', filename):
+        return False
+    # 禁止隐藏文件
+    if filename.startswith('.'):
         return False
     return True
 
 def _get_safe_path(folder: str, filename: str) -> Optional[str]:
-    """获取安全的文件路径，防止路径遍历"""
+    """获取安全的文件路径，防止路径遍历（跨平台兼容）"""
     if not _is_safe_filename(filename):
+        logger.warning(f"不安全的文件名被拒绝：{filename}")
         return None
-    abs_folder = os.path.abspath(folder)
-    abs_path = os.path.abspath(os.path.join(folder, filename))
-    if not abs_path.startswith(abs_folder + os.sep) and abs_path != abs_folder:
+    
+    # 规范化文件夹路径
+    abs_folder = os.path.realpath(os.path.abspath(folder))
+    # 规范化完整路径
+    abs_path = os.path.realpath(os.path.abspath(os.path.join(abs_folder, filename)))
+    
+    # 确保结果路径仍在目标文件夹内
+    if not (abs_path.startswith(abs_folder + os.sep) or abs_path == abs_folder):
+        logger.warning(f"路径遍历尝试被阻止：{abs_path}")
         return None
+    
     return abs_path
 
+# 使用 HMAC 进行更安全的签名验证
+_SECRET_KEY = hashlib.sha256(os.urandom(32)).hexdigest()
+
 def _compute_file_signature(data: Dict[str, Any]) -> str:
-    """计算数据签名，用于完整性验证"""
+    """计算数据签名，用于完整性验证（使用 HMAC）"""
     data_copy = {k: v for k, v in data.items() if k != '_signature'}
     json_str = json.dumps(data_copy, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(json_str.encode('utf-8')).hexdigest()[:16]
+    # 使用 HMAC-SHA256 替代简单哈希，防止中间人攻击
+    signature = hmac.new(
+        _SECRET_KEY.encode('utf-8'),
+        json_str.encode('utf-8'),
+        hashlib.sha256
+    ).hexdigest()
+    return signature[:32]  # 使用更长签名
 
 def _validate_file_signature(data: Dict[str, Any]) -> bool:
-    """验证文件签名"""
+    """验证文件签名（使用恒定时间比较）"""
     if '_signature' not in data:
         return False
     expected_sig = data['_signature']
     actual_sig = _compute_file_signature(data)
-    return expected_sig == actual_sig
+    # 使用恒定时间比较防止时序攻击
+    return hmac.compare_digest(expected_sig, actual_sig)
 
 class 作业本管理器:
     def __init__(self, folder="陆幼薇的作业本"):
@@ -705,24 +759,60 @@ class ConsoleInterface:
         print("10. 新建作业本  11. 切换科目      12. 保存作业本")
         print("13. 查看状态    0. 退出系统")
         print("="*60)
-        
+
+    def _safe_input(self, prompt: str, max_len: int = 100, allow_empty: bool = False) -> Optional[str]:
+        """安全输入函数，防止注入和过长输入"""
+        try:
+            user_input = input(prompt).strip()
+            
+            # 检查空输入
+            if not user_input:
+                if allow_empty:
+                    return ""
+                print("⚠️ 输入不能为空")
+                return None
+            
+            # 长度限制
+            if len(user_input) > max_len:
+                logger.warning(f"输入过长：{len(user_input)} 字符")
+                print(f"⚠️ 输入过长，最多允许 {max_len} 字符")
+                return None
+            
+            # 禁止危险字符（防止命令注入）
+            dangerous_chars = [';', '|', '&', '$', '`', '(', ')', '{', '}', '[', ']', '<', '>', '!', '\\']
+            for char in dangerous_chars:
+                if char in user_input:
+                    logger.warning(f"检测到危险字符：{char}")
+                    print(f"⚠️ 输入包含不安全字符：{char}")
+                    return None
+            
+            return user_input
+        except EOFError:
+            print("\n⚠️ 输入被中断")
+            return None
+        except Exception as e:
+            logger.error(f"输入错误：{e}")
+            return None
+
     def handle_training(self):
         """处理训练功能"""
         self.init_youwei_if_needed()
         try:
-            gen_input = input("请输入进化代数 (默认500): ").strip()
-            if gen_input and len(gen_input) <= 10 and gen_input.isdigit():
+            gen_input = self._safe_input("请输入进化代数 (默认 500): ", max_len=10, allow_empty=True)
+            if gen_input and gen_input.isdigit():
                 generations = int(gen_input)
                 generations = max(1, min(generations, 10000))
             else:
                 generations = 500
-            batch_input = input("请输入批次大小 (默认20): ").strip()
-            if batch_input and len(batch_input) <= 5 and batch_input.isdigit():
+                
+            batch_input = self._safe_input("请输入批次大小 (默认 20): ", max_len=5, allow_empty=True)
+            if batch_input and batch_input.isdigit():
                 batch_size = int(batch_input)
                 batch_size = max(1, min(batch_size, 1000))
             else:
                 batch_size = 20
         except ValueError:
+            logger.warning("输入无效，使用默认值")
             print("输入无效，使用默认值")
             generations = 500
             batch_size = 20
@@ -773,7 +863,7 @@ class ConsoleInterface:
     def handle_chat(self):
         """处理和幼薇聊天功能"""
         self.init_youwei_if_needed()
-        msg = input("👨 陆山君：")
+        msg = self._safe_input("👨 陆山君：", max_len=200)
         if not msg.strip():
             return
         reply = self.youwei.对话.回答(msg)
@@ -787,7 +877,7 @@ class ConsoleInterface:
     def handle_remember(self):
         """处理让幼薇记住功能"""
         self.init_youwei_if_needed()
-        thing = input("要让幼薇记住什么？")
+        thing = self._safe_input("要让幼薇记住什么？", max_len=200)
         if not thing.strip():
             return
         ret = self.youwei.记忆.记住(thing)
@@ -802,7 +892,7 @@ class ConsoleInterface:
     def handle_new_notebook(self):
         """处理新建作业本功能"""
         self.init_youwei_if_needed()
-        subject = input("请输入新科目名：")
+        subject = self._safe_input("请输入新科目名：", max_len=50)
         if not subject.strip():
             print("科目名不能为空")
             return
@@ -821,7 +911,11 @@ class ConsoleInterface:
             subject = book.rsplit('_', 1)[0]
             print(f"{i+1}. {subject}")
         try:
-            choice = int(input("请选择科目编号：")) - 1
+            choice_str = self._safe_input("请选择科目编号：", max_len=5)
+            if choice_str is None:
+                print("无效输入")
+                return
+            choice = int(choice_str) - 1
             if 0 <= choice < len(books):
                 subject = books[choice].rsplit('_', 1)[0]
                 ret = self.youwei.书包.换本(subject, self.youwei)
@@ -859,7 +953,7 @@ class ConsoleInterface:
         while self.running:
             self.display_menu()
             try:
-                choice = input("请选择功能 (0-13): ").strip()
+                choice = self._safe_input("请选择功能 (0-13): ", max_len=5, allow_empty=True)
                 # 输入验证：只允许数字和空字符串，长度限制
                 if not choice or len(choice) > 2 or not choice.isdigit():
                     print("无效选择，请输入 0-13 的数字")

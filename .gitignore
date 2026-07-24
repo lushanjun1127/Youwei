@@ -3,6 +3,18 @@
 *.pyc
 __pycache__/
 
+# Python cache directories
+*.pyo
+*.pyd
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+
+# Logs
+*.log
+
 # Environment files
 .env
 .env.local
